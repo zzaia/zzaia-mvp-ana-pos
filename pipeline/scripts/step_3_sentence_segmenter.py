@@ -60,18 +60,20 @@ class SentenceSegmenter(PipelineStep):
     to remove noise fragments.
     """
 
-    def __init__(self, min_tokens: int = 5):
+    def __init__(self, min_tokens: int = 5, max_length: int = 20000000):
         """
         Initialize sentence segmenter.
 
         Args:
             min_tokens: Minimum token count for a sentence to be retained
+            max_length: Maximum character length for the spaCy pipeline
         """
         super().__init__(
             step_number=3,
             name="Sentence Segmenter",
             description="Split document into ordered sentences using spaCy legal rules",
         )
+        self._max_length = max_length
         self._min_tokens = min_tokens
         self._nlp: Optional[Language] = None
 
@@ -84,6 +86,7 @@ class SentenceSegmenter(PipelineStep):
         """
         if self._nlp is None:
             nlp = spacy.load("pt_core_news_lg", disable=["ner", "lemmatizer"])
+            nlp.max_length = self._max_length
             if "legal_sentence_fixer" not in nlp.pipe_names:
                 nlp.add_pipe("legal_sentence_fixer", after="senter")
             self._nlp = nlp

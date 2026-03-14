@@ -67,15 +67,19 @@ class PipelineManager:
 
     def run_step(self, step_number: int, input_data: Any) -> Any:
         """
-        Execute a single step by its number.
+        Execute a single step by its number, loading from checkpoint when available.
 
         Args:
             step_number: The step to execute
-            input_data: Input for the specified step
+            input_data: Input for the specified step (ignored when checkpoint exists)
 
         Returns:
             Step output
         """
+        cached = self._load_checkpoint(step_number)
+        if cached is not None:
+            self._logger.info(f"Step {step_number} loaded from checkpoint")
+            return cached
         step = self._steps[step_number]
         output = step.run(input_data)
         self._save_checkpoint(step_number, output)
