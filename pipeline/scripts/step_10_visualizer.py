@@ -116,6 +116,11 @@ class Visualizer(PipelineStep):
         """
         sentences = clustering.clustered_sentences
         fig, ax = plt.subplots(figsize=self._figsize)
+        if not sentences:
+            ax.text(0.5, 0.5, "No sentences to display", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("UMAP Projection by Rhetorical Role")
+            plt.tight_layout()
+            return fig
         roles = sorted(set(s.role for s in sentences))
         for role in roles:
             subset = [s for s in sentences if s.role == role]
@@ -141,10 +146,15 @@ class Visualizer(PipelineStep):
             matplotlib Figure
         """
         stats = sorted(statistics.cluster_stats, key=lambda s: s.frequency, reverse=True)
+        fig, ax = plt.subplots(figsize=self._figsize)
+        if not stats:
+            ax.text(0.5, 0.5, "No clusters to display", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Cluster Sentence Frequency")
+            plt.tight_layout()
+            return fig
         labels = [f"{s.role[:3]}-{s.cluster_id}" for s in stats]
         values = [s.frequency for s in stats]
         colors = [_ROLE_COLORS.get(s.role, "#999999") for s in stats]
-        fig, ax = plt.subplots(figsize=self._figsize)
         ax.bar(labels, values, color=colors)
         ax.set_title("Cluster Sentence Frequency")
         ax.set_xlabel("Cluster (Role-ID)")
@@ -166,15 +176,20 @@ class Visualizer(PipelineStep):
         from step_5_rhetorical_labeler import ROLES
 
         stats = statistics.cluster_stats
+        fig, ax = plt.subplots(figsize=self._figsize)
+        if not stats:
+            ax.text(0.5, 0.5, "No clusters to display", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Role Distribution Heatmap Across Clusters")
+            plt.tight_layout()
+            return fig
         cluster_names = [f"{s.role[:3]}-{s.cluster_id}" for s in stats]
         matrix = np.array([
             [s.role_distribution.get(role, 0) for role in ROLES]
             for s in stats
-        ], dtype=float)
+        ], dtype=float).reshape(-1, len(ROLES))
         row_sums = matrix.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         norm_matrix = matrix / row_sums
-        fig, ax = plt.subplots(figsize=self._figsize)
         img = ax.imshow(norm_matrix.T, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1)
         ax.set_xticks(range(len(cluster_names)))
         ax.set_xticklabels(cluster_names, rotation=45, ha="right")

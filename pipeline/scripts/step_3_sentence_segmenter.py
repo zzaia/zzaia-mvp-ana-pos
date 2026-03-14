@@ -85,10 +85,8 @@ class SentenceSegmenter(PipelineStep):
             Configured spaCy Language pipeline
         """
         if self._nlp is None:
-            nlp = spacy.load("pt_core_news_lg", disable=["ner", "lemmatizer", "parser"])
+            nlp = spacy.load("pt_core_news_lg", exclude=["ner", "lemmatizer", "parser"])
             nlp.max_length = self._max_length
-            if "senter" not in nlp.pipe_names:
-                nlp.add_pipe("senter")
             if "legal_sentence_fixer" not in nlp.pipe_names:
                 nlp.add_pipe("legal_sentence_fixer", after="senter")
             self._nlp = nlp
