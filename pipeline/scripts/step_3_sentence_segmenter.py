@@ -1,11 +1,11 @@
 """Step 3: Sentence segmentation using spaCy pt_core_news_lg with legal rules."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from statistics import mean
 from typing import Optional
 
 import spacy
 from spacy.language import Language
-from spacy.tokens import Doc
 
 from pipeline_step import PipelineStep
 from step_2_boilerplate_remover import BoilerplateOutput
@@ -15,23 +15,6 @@ _LEGAL_ABBREVS: list[str] = [
     "fls", "fl", "p", "pp", "ss", "obs", "ex", "dr", "dra", "des",
     "min", "proc", "prom", "coord", "adv", "mp", "pg", "pgs",
 ]
-
-
-@Language.component("legal_sentence_fixer")
-def _legal_sentence_fixer(doc: Doc) -> Doc:
-    """
-    Prevent sentence breaks after common legal abbreviations.
-
-    Args:
-        doc: spaCy Doc object
-
-    Returns:
-        Doc with corrected sentence boundaries
-    """
-    for token in doc[:-1]:
-        if token.text.lower().rstrip(".") in _LEGAL_ABBREVS:
-            doc[token.i + 1].is_sent_start = False
-    return doc
 
 
 @dataclass
@@ -54,10 +37,9 @@ class SentenceSegmenter(PipelineStep):
     """
     Segment legal text into ordered sentences.
 
-    Uses spaCy pt_core_news_lg as the base segmenter and adds a custom
-    pipeline component that prevents sentence splits after common Brazilian
-    legal abbreviations. Sentences shorter than min_tokens are discarded
-    to remove noise fragments.
+    Uses spaCy pt_core_news_lg with parser for accurate boundary detection,
+    then applies post-processing to merge sentences incorrectly split after
+    legal abbreviations. Sentences shorter than min_tokens are discarded.
     """
 
     def __init__(self, min_tokens: int = 5, max_length: int = 20000000):
@@ -79,18 +61,41 @@ class SentenceSegmenter(PipelineStep):
 
     def _get_nlp(self) -> Language:
         """
-        Load spaCy model lazily with the legal sentence fixer component.
+        Load spaCy model lazily with parser for sentence boundary detection.
 
         Returns:
             Configured spaCy Language pipeline
         """
         if self._nlp is None:
-            nlp = spacy.load("pt_core_news_lg", exclude=["ner", "lemmatizer", "parser"])
+            nlp = spacy.load("pt_core_news_lg", exclude=["ner", "lemmatizer"])
             nlp.max_length = self._max_length
-            if "legal_sentence_fixer" not in nlp.pipe_names:
-                nlp.add_pipe("legal_sentence_fixer", after="senter")
             self._nlp = nlp
         return self._nlp
+
+    def _merge_abbrev_sentences(self, sentences: list[str]) -> list[str]:
+        """
+        Merge sentences incorrectly split after legal abbreviations.
+
+        Args:
+            sentences: Raw sentence list from spaCy segmentation
+
+        Returns:
+            Sentence list with abbreviation-induced splits merged
+        """
+        merged: list[str] = []
+        skip_next = False
+        for i, sentence in enumerate(sentences):
+            if skip_next:
+                skip_next = False
+                continue
+            tokens = sentence.split()
+            last_token = tokens[-1].lower().rstrip(".") if tokens else ""
+            if last_token in _LEGAL_ABBREVS and i + 1 < len(sentences):
+                merged.append(sentence + " " + sentences[i + 1])
+                skip_next = True
+            else:
+                merged.append(sentence)
+        return merged
 
     def process(self, input_data: BoilerplateOutput) -> SegmentationOutput:
         """
@@ -104,11 +109,12 @@ class SentenceSegmenter(PipelineStep):
         """
         nlp = self._get_nlp()
         doc = nlp(input_data.filtered_text)
-        sentences = [
+        raw_sentences = [
             sent.text.strip()
             for sent in doc.sents
             if len(sent) >= self._min_tokens and sent.text.strip()
         ]
+        sentences = self._merge_abbrev_sentences(raw_sentences)
         return SegmentationOutput(
             sentences=sentences,
             sentence_count=len(sentences),
@@ -117,12 +123,17 @@ class SentenceSegmenter(PipelineStep):
 
     def validate(self, output_data: SegmentationOutput) -> bool:
         """
-        Validate that at least one sentence was extracted.
+        Validate that segmentation produced a meaningful sentence set.
 
         Args:
             output_data: SegmentationOutput to validate
 
         Returns:
-            True if sentences list is non-empty
+            True if sentence count >= 10 and average sentence length < 5000
         """
-        return len(output_data.sentences) > 0
+        sentences = output_data.sentences
+        if output_data.sentence_count < 10:
+            return False
+        if mean(len(s) for s in sentences) >= 5000:
+            return False
+        return True
