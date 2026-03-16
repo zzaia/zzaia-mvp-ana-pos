@@ -1,4 +1,4 @@
-"""Step 6: Sentence embedding using BERTimbau with mean pooling and sliding window."""
+"""Step 5: Sentence embedding using BERTimbau with mean pooling and sliding window."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from pipeline_step import PipelineStep
-from step_5_rhetorical_labeler import LabeledSentence, LabelingOutput
+from step_4_citation_normalizer import CitationOutput
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -21,19 +21,15 @@ MODEL_NAME = "neuralmind/bert-base-portuguese-cased"
 @dataclass
 class EmbeddedSentence:
     """
-    A labeled sentence augmented with its embedding vector.
+    A sentence augmented with its embedding vector.
 
     Attributes:
         text: Sentence text
-        role: Rhetorical role label
-        confidence: Role classification confidence
         embedding: 768-dimensional float32 vector
         citation_metadata: Original citations
     """
 
     text: str
-    role: str
-    confidence: float
     embedding: np.ndarray
     citation_metadata: dict[str, str] = field(default_factory=dict)
 
@@ -82,7 +78,7 @@ class EmbeddingGenerator(PipelineStep):
             batch_size: Number of sentences to encode at once
         """
         super().__init__(
-            step_number=6,
+            step_number=5,
             name="Embedding Generator",
             description="Generate 768-dim embeddings with BERTimbau mean pooling",
         )
@@ -99,29 +95,28 @@ class EmbeddingGenerator(PipelineStep):
             self._model = AutoModel.from_pretrained(MODEL_NAME)
             self._model.eval()
 
-    def process(self, input_data: LabelingOutput) -> EmbeddingOutput:
+    def process(self, input_data: CitationOutput) -> EmbeddingOutput:
         """
-        Embed all labeled sentences.
+        Embed all sentences from citation normalization output.
 
         Args:
-            input_data: LabelingOutput with labeled_sentences
+            input_data: CitationOutput with sentences and citation_metadata
 
         Returns:
             EmbeddingOutput with 768-dim embedding per sentence
         """
         self._load_model()
         embedded: list[EmbeddedSentence] = []
-        sentences = input_data.labeled_sentences
+        sentences = list(zip(input_data.sentences, input_data.citation_metadata))
         for i in range(0, len(sentences), self._batch_size):
-            batch: list[LabeledSentence] = sentences[i: i + self._batch_size]
-            vectors = self._embed_batch(batch)
-            for labeled, vector in zip(batch, vectors):
+            batch = sentences[i: i + self._batch_size]
+            texts = [text for text, _ in batch]
+            vectors = self._embed_batch(texts)
+            for (text, citations), vector in zip(batch, vectors):
                 embedded.append(EmbeddedSentence(
-                    text=labeled.text,
-                    role=labeled.role,
-                    confidence=labeled.confidence,
+                    text=text,
                     embedding=vector,
-                    citation_metadata=labeled.citation_metadata,
+                    citation_metadata=citations,
                 ))
         return EmbeddingOutput(
             embedded_sentences=embedded,
@@ -130,19 +125,19 @@ class EmbeddingGenerator(PipelineStep):
             source_path=input_data.source_path,
         )
 
-    def _embed_batch(self, batch: list[LabeledSentence]) -> list[np.ndarray]:
+    def _embed_batch(self, texts: list[str]) -> list[np.ndarray]:
         """
-        Encode a batch of sentences into embedding vectors.
+        Encode a batch of sentence texts into embedding vectors.
 
         Args:
-            batch: List of LabeledSentence objects
+            texts: List of sentence strings
 
         Returns:
             List of 768-dim numpy arrays in the same order
         """
         vectors: list[np.ndarray] = []
-        for item in batch:
-            vector = self._embed_single(item.text)
+        for text in texts:
+            vector = self._embed_single(text)
             vectors.append(vector)
         return vectors
 

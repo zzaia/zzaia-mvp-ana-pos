@@ -1,4 +1,4 @@
-"""Step 7: UMAP dimensionality reduction per rhetorical role group."""
+"""Step 6: UMAP dimensionality reduction on all sentences in a single projection."""
 
 from dataclasses import dataclass, field
 from typing import Optional
@@ -7,7 +7,7 @@ import numpy as np
 import umap
 
 from pipeline_step import PipelineStep
-from step_6_embedding_generator import EmbeddedSentence, EmbeddingOutput
+from step_5_embedding_generator import EmbeddingOutput
 
 
 @dataclass
@@ -17,16 +17,12 @@ class ReducedSentence:
 
     Attributes:
         text: Sentence text
-        role: Rhetorical role label
-        confidence: Role classification confidence
         embedding: Original 768-dim embedding
         reduced_vector: UMAP-reduced n_components-dim vector
         citation_metadata: Original citations
     """
 
     text: str
-    role: str
-    confidence: float
     embedding: np.ndarray
     reduced_vector: np.ndarray
     citation_metadata: dict[str, str] = field(default_factory=dict)
@@ -56,11 +52,10 @@ class UmapReducer(PipelineStep):
     """
     Reduce 768-dim embeddings to a lower-dimensional space using UMAP.
 
-    UMAP is applied independently per rhetorical role group so that the
-    topology learned within each group is not distorted by inter-role
-    distances. Using cosine metric preserves semantic similarity for
-    high-dimensional normalized BERT embeddings. A fixed random_state
-    ensures reproducibility.
+    A single UMAP projection is applied to all sentences simultaneously,
+    preserving the global topology across the entire corpus. Cosine metric
+    preserves semantic similarity for high-dimensional normalised BERT
+    embeddings. A fixed random_state ensures reproducibility.
     """
 
     def __init__(
@@ -80,9 +75,9 @@ class UmapReducer(PipelineStep):
             random_state: Seed for reproducibility
         """
         super().__init__(
-            step_number=7,
+            step_number=6,
             name="UMAP Reducer",
-            description="Reduce 768-dim embeddings to n_components per role group",
+            description="Reduce 768-dim embeddings to n_components in a single projection",
         )
         self._n_components = n_components
         self._n_neighbors = n_neighbors
@@ -91,7 +86,7 @@ class UmapReducer(PipelineStep):
 
     def process(self, input_data: EmbeddingOutput) -> UmapOutput:
         """
-        Apply UMAP reduction grouped by rhetorical role.
+        Apply UMAP reduction to all sentences in one single projection.
 
         Args:
             input_data: EmbeddingOutput with 768-dim embeddings
@@ -100,22 +95,13 @@ class UmapReducer(PipelineStep):
             UmapOutput with reduced vectors per sentence
         """
         sentences = input_data.embedded_sentences
-        role_groups: dict[str, list[int]] = {}
-        for idx, item in enumerate(sentences):
-            role_groups.setdefault(item.role, []).append(idx)
-        reduced_map: dict[int, np.ndarray] = {}
-        for role, indices in role_groups.items():
-            matrix = np.stack([sentences[i].embedding for i in indices])
-            reduced = self._reduce_group(matrix)
-            for local_idx, global_idx in enumerate(indices):
-                reduced_map[global_idx] = reduced[local_idx]
+        matrix = np.stack([item.embedding for item in sentences])
+        reduced = self._reduce(matrix)
         reduced_sentences = [
             ReducedSentence(
                 text=item.text,
-                role=item.role,
-                confidence=item.confidence,
                 embedding=item.embedding,
-                reduced_vector=reduced_map[idx],
+                reduced_vector=reduced[idx],
                 citation_metadata=item.citation_metadata,
             )
             for idx, item in enumerate(sentences)
@@ -128,12 +114,12 @@ class UmapReducer(PipelineStep):
             source_path=input_data.source_path,
         )
 
-    def _reduce_group(self, matrix: np.ndarray) -> np.ndarray:
+    def _reduce(self, matrix: np.ndarray) -> np.ndarray:
         """
-        Fit and transform a matrix of embeddings with UMAP.
+        Fit and transform the full embedding matrix with UMAP.
 
         Args:
-            matrix: (n_samples, 768) embedding matrix for one role group
+            matrix: (n_samples, 768) embedding matrix for all sentences
 
         Returns:
             (n_samples, n_components) reduced matrix

@@ -1,4 +1,4 @@
-"""Step 8: HDBSCAN clustering applied per rhetorical role group."""
+"""Step 7: HDBSCAN clustering applied to all sentences in a single run."""
 
 from dataclasses import dataclass, field
 from typing import Optional
@@ -7,7 +7,7 @@ import hdbscan
 import numpy as np
 
 from pipeline_step import PipelineStep
-from step_7_umap_reducer import ReducedSentence, UmapOutput
+from step_6_umap_reducer import ReducedSentence, UmapOutput
 
 
 @dataclass
@@ -17,22 +17,18 @@ class ClusteredSentence:
 
     Attributes:
         text: Sentence text
-        role: Rhetorical role label
-        confidence: Role classification confidence
         embedding: Original 768-dim embedding
         reduced_vector: UMAP-reduced vector
         cluster_id: Cluster label (-1 means noise)
-        cluster_probability: HDBSCAN soft cluster membership probability
+        membership_probability: HDBSCAN soft cluster membership probability
         citation_metadata: Original citations
     """
 
     text: str
-    role: str
-    confidence: float
     embedding: np.ndarray
     reduced_vector: np.ndarray
     cluster_id: int
-    cluster_probability: float
+    membership_probability: float
     citation_metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -43,7 +39,7 @@ class ClusteringOutput:
 
     Attributes:
         clustered_sentences: Sentences with cluster assignments
-        cluster_counts: Per-role cluster count statistics
+        total_clusters: Total number of non-noise clusters found
         noise_count: Total sentences labeled as noise (cluster_id == -1)
         min_cluster_size: HDBSCAN parameter used
         min_samples: HDBSCAN parameter used
@@ -51,7 +47,7 @@ class ClusteringOutput:
     """
 
     clustered_sentences: list[ClusteredSentence]
-    cluster_counts: dict[str, int] = field(default_factory=dict)
+    total_clusters: int = 0
     noise_count: int = 0
     min_cluster_size: int = 5
     min_samples: int = 3
@@ -60,14 +56,14 @@ class ClusteringOutput:
 
 class HdbscanClusterer(PipelineStep):
     """
-    Cluster sentences within each rhetorical role using HDBSCAN.
+    Cluster all sentences in a single HDBSCAN run.
 
-    HDBSCAN is applied independently per role group on the UMAP-reduced
-    vectors. This avoids forcing all roles into a single global topology
-    and lets cluster density thresholds be role-specific. Euclidean
-    distance is used on the low-dimensional UMAP output (cosine similarity
-    was applied during UMAP reduction). Sentences not belonging to any
-    cluster are assigned cluster_id = -1.
+    HDBSCAN is applied to the full UMAP-reduced corpus in one pass, allowing
+    the algorithm to discover density-based clusters across the entire dataset
+    without prior case type knowledge. Euclidean distance is used on the
+    low-dimensional UMAP output. Sentences not belonging to any cluster are
+    assigned cluster_id = -1. Post-hoc case type labeling is performed in
+    Step 8 using the representative sentence of each cluster.
     """
 
     def __init__(self, min_cluster_size: int = 5, min_samples: int = 3):
@@ -79,16 +75,16 @@ class HdbscanClusterer(PipelineStep):
             min_samples: Minimum samples in a neighbourhood
         """
         super().__init__(
-            step_number=8,
+            step_number=7,
             name="HDBSCAN Clusterer",
-            description="Cluster sentences per role group with HDBSCAN",
+            description="Cluster all sentences in a single HDBSCAN run",
         )
         self._min_cluster_size = min_cluster_size
         self._min_samples = min_samples
 
     def process(self, input_data: UmapOutput) -> ClusteringOutput:
         """
-        Assign clusters to all sentences grouped by rhetorical role.
+        Assign clusters to all sentences in a single HDBSCAN run.
 
         Args:
             input_data: UmapOutput with UMAP-reduced vectors
@@ -97,45 +93,33 @@ class HdbscanClusterer(PipelineStep):
             ClusteringOutput with cluster assignments per sentence
         """
         sentences = input_data.reduced_sentences
-        role_groups: dict[str, list[int]] = {}
-        for idx, item in enumerate(sentences):
-            role_groups.setdefault(item.role, []).append(idx)
-        label_map: dict[int, int] = {}
-        prob_map: dict[int, float] = {}
-        cluster_counts: dict[str, int] = {}
-        for role, indices in role_groups.items():
-            matrix = np.stack([sentences[i].reduced_vector for i in indices])
-            labels, probs = self._cluster_group(matrix)
-            cluster_counts[role] = int(np.max(labels) + 1) if np.max(labels) >= 0 else 0
-            for local_idx, global_idx in enumerate(indices):
-                label_map[global_idx] = int(labels[local_idx])
-                prob_map[global_idx] = float(probs[local_idx])
+        matrix = np.stack([item.reduced_vector for item in sentences])
+        labels, probs = self._cluster(matrix)
         clustered = [
             ClusteredSentence(
                 text=item.text,
-                role=item.role,
-                confidence=item.confidence,
                 embedding=item.embedding,
                 reduced_vector=item.reduced_vector,
-                cluster_id=label_map[idx],
-                cluster_probability=prob_map[idx],
+                cluster_id=int(labels[idx]),
+                membership_probability=float(probs[idx]),
                 citation_metadata=item.citation_metadata,
             )
             for idx, item in enumerate(sentences)
         ]
         noise_count = sum(1 for s in clustered if s.cluster_id == -1)
+        total_clusters = int(np.max(labels) + 1) if np.max(labels) >= 0 else 0
         return ClusteringOutput(
             clustered_sentences=clustered,
-            cluster_counts=cluster_counts,
+            total_clusters=total_clusters,
             noise_count=noise_count,
             min_cluster_size=self._min_cluster_size,
             min_samples=self._min_samples,
             source_path=input_data.source_path,
         )
 
-    def _cluster_group(self, matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _cluster(self, matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
-        Fit HDBSCAN on a role group matrix.
+        Fit HDBSCAN on the full reduced embedding matrix.
 
         Args:
             matrix: (n_samples, n_components) reduced embedding matrix

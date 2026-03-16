@@ -1,4 +1,4 @@
-"""Step 10: Visualization of UMAP scatter, frequency bar chart, and role heatmap."""
+"""Step 9: Visualization of UMAP scatter, frequency bar chart, and case type heatmap."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,16 +9,21 @@ import matplotlib.figure
 import numpy as np
 
 from pipeline_step import PipelineStep
-from step_8_hdbscan_clusterer import ClusteringOutput
-from step_9_statistics_generator import StatisticsOutput
+from step_7_hdbscan_clusterer import ClusteringOutput
+from step_8_statistics_generator import StatisticsOutput
 
-_ROLE_COLORS = {
-    "Fact": "#4C72B0",
-    "Argument": "#DD8452",
-    "Ruling": "#55A868",
-    "Precedent": "#C44E52",
-    "Procedural": "#8172B3",
-    "Uncertain": "#937860",
+_CASE_COLORS = {
+    "CasaRoubada": "#4C72B0",
+    "AssaltoArmado": "#DD8452",
+    "HomicidioDoloso": "#55A868",
+    "TraficoDrogas": "#C44E52",
+    "ViolenciaDomestica": "#8172B3",
+    "FurtoCelular": "#937860",
+    "AcidenteTransito": "#DA8BC3",
+    "EstelionatoFraude": "#8C8C8C",
+    "CrimesFinanceiros": "#CCB974",
+    "LesaoCorporal": "#64B5CD",
+    "Unknown": "#CCCCCC",
 }
 
 
@@ -28,8 +33,8 @@ class VisualizationInput:
     Combined input for the visualization step.
 
     Attributes:
-        clustering_output: ClusteringOutput from step 8
-        statistics_output: StatisticsOutput from step 9
+        clustering_output: ClusteringOutput from step 7
+        statistics_output: StatisticsOutput from step 8
         output_dir: Directory where figures will be saved (optional)
     """
 
@@ -57,9 +62,9 @@ class Visualizer(PipelineStep):
     Generate three key visualizations for the semantic frequency analysis.
 
     Produces:
-    1. UMAP scatter plot coloured by rhetorical role and cluster ID
+    1. UMAP scatter plot coloured by post-hoc case type from ClusterStats
     2. Frequency bar chart of sentence counts per cluster
-    3. Role distribution heatmap across clusters
+    3. Case type frequency bar chart from StatisticsOutput.case_type_frequency
     """
 
     def __init__(self, figsize: tuple[int, int] = (12, 8)):
@@ -70,9 +75,9 @@ class Visualizer(PipelineStep):
             figsize: Default matplotlib figure size (width, height)
         """
         super().__init__(
-            step_number=10,
+            step_number=9,
             name="Visualizer",
-            description="Generate UMAP scatter, frequency chart, and role heatmap",
+            description="Generate UMAP scatter, frequency chart, and case type heatmap",
         )
         self._figsize = figsize
 
@@ -88,50 +93,58 @@ class Visualizer(PipelineStep):
         """
         figures: list[matplotlib.figure.Figure] = []
         saved: list[Path] = []
-        fig_scatter = self._umap_scatter(input_data.clustering_output)
+        fig_scatter = self._umap_scatter(input_data.clustering_output, input_data.statistics_output)
         figures.append(fig_scatter)
         fig_freq = self._frequency_bar(input_data.statistics_output)
         figures.append(fig_freq)
-        fig_heat = self._role_heatmap(input_data.statistics_output)
+        fig_heat = self._case_type_frequency_bar(input_data.statistics_output)
         figures.append(fig_heat)
         if input_data.output_dir is not None:
             output_dir = Path(input_data.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            names = ["umap_scatter.png", "frequency_bar.png", "role_heatmap.png"]
+            names = ["umap_scatter.png", "frequency_bar.png", "case_type_frequency.png"]
             for fig, name in zip(figures, names):
                 path = output_dir / name
                 fig.savefig(path, dpi=150, bbox_inches="tight")
                 saved.append(path)
         return VisualizationOutput(figures=figures, saved_paths=saved)
 
-    def _umap_scatter(self, clustering: ClusteringOutput) -> matplotlib.figure.Figure:
+    def _umap_scatter(
+        self, clustering: ClusteringOutput, statistics: StatisticsOutput
+    ) -> matplotlib.figure.Figure:
         """
-        Plot 2D UMAP projection (first two components) coloured by role.
+        Plot 2D UMAP projection coloured by post-hoc case type from ClusterStats.
 
         Args:
             clustering: ClusteringOutput with reduced_vector per sentence
+            statistics: StatisticsOutput with case_type per cluster
 
         Returns:
             matplotlib Figure
         """
+        cluster_case_type: dict[int, str] = {
+            s.cluster_id: s.case_type for s in statistics.cluster_stats
+        }
         sentences = clustering.clustered_sentences
         fig, ax = plt.subplots(figsize=self._figsize)
         if not sentences:
             ax.text(0.5, 0.5, "No sentences to display", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("UMAP Projection by Rhetorical Role")
+            ax.set_title("UMAP Projection by Case Type")
             plt.tight_layout()
             return fig
-        roles = sorted(set(s.role for s in sentences))
-        for role in roles:
-            subset = [s for s in sentences if s.role == role]
+        case_type_groups: dict[str, list] = {}
+        for s in sentences:
+            label = cluster_case_type.get(s.cluster_id, "Unknown")
+            case_type_groups.setdefault(label, []).append(s)
+        for case_type, subset in sorted(case_type_groups.items()):
             xs = [s.reduced_vector[0] for s in subset]
             ys = [s.reduced_vector[1] for s in subset]
-            color = _ROLE_COLORS.get(role, "#999999")
-            ax.scatter(xs, ys, label=role, color=color, alpha=0.6, s=20)
-        ax.set_title("UMAP Projection by Rhetorical Role")
+            color = _CASE_COLORS.get(case_type, "#999999")
+            ax.scatter(xs, ys, label=case_type, color=color, alpha=0.6, s=20)
+        ax.set_title("UMAP Projection by Case Type")
         ax.set_xlabel("UMAP Component 1")
         ax.set_ylabel("UMAP Component 2")
-        ax.legend(title="Role", loc="best")
+        ax.legend(title="Case Type", loc="best")
         plt.tight_layout()
         return fig
 
@@ -152,53 +165,43 @@ class Visualizer(PipelineStep):
             ax.set_title("Cluster Sentence Frequency")
             plt.tight_layout()
             return fig
-        labels = [f"{s.role[:3]}-{s.cluster_id}" for s in stats]
+        labels = [f"{s.case_type[:4]}-{s.cluster_id}" for s in stats]
         values = [s.frequency for s in stats]
-        colors = [_ROLE_COLORS.get(s.role, "#999999") for s in stats]
+        colors = [_CASE_COLORS.get(s.case_type, "#999999") for s in stats]
         ax.bar(labels, values, color=colors)
         ax.set_title("Cluster Sentence Frequency")
-        ax.set_xlabel("Cluster (Role-ID)")
+        ax.set_xlabel("Cluster (CaseType-ID)")
         ax.set_ylabel("Sentence Count")
         ax.tick_params(axis="x", rotation=45)
         plt.tight_layout()
         return fig
 
-    def _role_heatmap(self, statistics: StatisticsOutput) -> matplotlib.figure.Figure:
+    def _case_type_frequency_bar(self, statistics: StatisticsOutput) -> matplotlib.figure.Figure:
         """
-        Heatmap of role distribution across clusters.
+        Bar chart of total sentence frequency per case type from case_type_frequency.
 
         Args:
-            statistics: StatisticsOutput with cluster_stats list
+            statistics: StatisticsOutput with case_type_frequency dict
 
         Returns:
             matplotlib Figure
         """
-        from step_5_rhetorical_labeler import ROLES
-
-        stats = statistics.cluster_stats
+        freq = statistics.case_type_frequency
         fig, ax = plt.subplots(figsize=self._figsize)
-        if not stats:
-            ax.text(0.5, 0.5, "No clusters to display", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("Role Distribution Heatmap Across Clusters")
+        if not freq:
+            ax.text(0.5, 0.5, "No case types to display", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Case Type Frequency (Post-hoc)")
             plt.tight_layout()
             return fig
-        cluster_names = [f"{s.role[:3]}-{s.cluster_id}" for s in stats]
-        matrix = np.array([
-            [s.role_distribution.get(role, 0) for role in ROLES]
-            for s in stats
-        ], dtype=float).reshape(-1, len(ROLES))
-        row_sums = matrix.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1
-        norm_matrix = matrix / row_sums
-        img = ax.imshow(norm_matrix.T, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1)
-        ax.set_xticks(range(len(cluster_names)))
-        ax.set_xticklabels(cluster_names, rotation=45, ha="right")
-        ax.set_yticks(range(len(ROLES)))
-        ax.set_yticklabels(ROLES)
-        ax.set_title("Role Distribution Heatmap Across Clusters")
-        ax.set_xlabel("Cluster (Role-ID)")
-        ax.set_ylabel("Rhetorical Role")
-        fig.colorbar(img, ax=ax, label="Proportion")
+        sorted_items = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+        labels = [item[0] for item in sorted_items]
+        values = [item[1] for item in sorted_items]
+        colors = [_CASE_COLORS.get(label, "#999999") for label in labels]
+        ax.bar(labels, values, color=colors)
+        ax.set_title("Case Type Frequency (Post-hoc)")
+        ax.set_xlabel("Case Type")
+        ax.set_ylabel("Total Sentence Count")
+        ax.tick_params(axis="x", rotation=45)
         plt.tight_layout()
         return fig
 
