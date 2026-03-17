@@ -61,57 +61,7 @@ _CASE_SEEDS: dict[str, list[str]] = {
         "O réu agrediu a vítima com socos e chutes, causando lesões corporais de natureza leve.",
         "O acusado espancou o ofendido em via pública, produzindo ferimentos que necessitaram de atendimento médico.",
         "A vítima sofreu lesões corporais graves em razão de agressão praticada pelo réu com instrumento contundente.",
-    ],
-    "DireitoAdministrativo": [
-        "A Administração Pública deve observar os princípios da legalidade, impessoalidade, moralidade, publicidade e eficiência.",
-        "O servidor público tem direito à revisão do ato administrativo que lhe cause prejuízo, assegurado o contraditório.",
-        "A anulação de ato administrativo irregular impõe a recomposição do status quo ante para o administrado de boa-fé.",
-    ],
-    "DireitoTributario": [
-        "A taxa de juros de mora incidente na repetição de indébito tributário é a SELIC.",
-        "É legítima a cobrança de ICMS sobre a importação de bem destinado ao ativo fixo de empresa não contribuinte.",
-        "O Código de Defesa do Consumidor é aplicável às instituições financeiras no tocante a tarifas e encargos.",
-    ],
-    "DireitoPrevidenciario": [
-        "O tempo de serviço rural anterior à Lei de Benefícios pode ser computado para fins de aposentadoria.",
-        "É devida a pensão por morte ao cônjuge sobrevivente independentemente do período de carência.",
-        "O benefício de prestação continuada é devido ao idoso com renda per capita inferior a um quarto do salário mínimo.",
-    ],
-    "DireitoConsumidor": [
-        "O Código de Defesa do Consumidor se aplica às empresas de planos de saúde.",
-        "A inversão do ônus da prova em favor do consumidor é aplicável quando houver verossimilhança da alegação.",
-        "É abusiva a cláusula contratual que restringe direitos fundamentais do consumidor em contratos de adesão.",
-    ],
-    "DireitoCivil": [
-        "O prazo prescricional para ações de reparação civil extracontratual é de três anos.",
-        "A responsabilidade civil do Estado por ato omissivo depende da comprovação de culpa.",
-        "O condomínio tem legitimidade para propor ação de cobrança de débito condominial.",
-    ],
-    "DireitoProcessual": [
-        "É cabível mandado de segurança contra ato judicial desprovido de recurso próprio com efeito suspensivo.",
-        "O juiz pode conhecer de ofício a prescrição nos feitos não patrimoniais.",
-        "A reconvenção é cabível nos processos de execução e cautelar quando houver conexão com a ação principal.",
-    ],
-    "DireitoContratual": [
-        "Os contratos bancários estão sujeitos ao Código de Defesa do Consumidor, sendo nulas as cláusulas abusivas.",
-        "A cláusula penal não pode ser exigida simultaneamente com o cumprimento da obrigação principal.",
-        "O fiador pode opor ao credor as exceções pessoais do devedor afiançado decorrentes do contrato.",
-    ],
-    "DireitoAmbiental": [
-        "A responsabilidade por dano ambiental é objetiva e solidária, não se admitindo a denunciação da lide.",
-        "A obrigação de reparar o dano ambiental é propter rem e transmite-se ao adquirente do imóvel.",
-        "O licenciamento ambiental é obrigatório para atividades potencialmente causadoras de degradação.",
-    ],
-    "DireitoTrabalhista": [
-        "O prazo prescricional trabalhista para ações contra a Fazenda Pública é quinquenal.",
-        "A jornada de trabalho em regime de compensação deve ser estabelecida por acordo coletivo.",
-        "É devido o adicional de insalubridade ao empregado exposto a agentes nocivos acima dos limites legais.",
-    ],
-    "DireitoConstitucional": [
-        "É inconstitucional a exigência de depósito prévio como condição de admissibilidade de ação judicial.",
-        "O mandado de segurança coletivo pode ser impetrado por partido político com representação no Congresso Nacional.",
-        "A imunidade tributária recíproca veda a instituição de impostos sobre o patrimônio, renda ou serviços uns dos outros.",
-    ],
+    ]
 }
 
 
