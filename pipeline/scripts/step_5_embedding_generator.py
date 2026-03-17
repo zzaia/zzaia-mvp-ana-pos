@@ -15,9 +15,6 @@ from step_4_citation_normalizer import CitationOutput
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-MODEL_NAME = "neuralmind/bert-base-portuguese-cased"
-
-
 @dataclass
 class EmbeddedSentence:
     """
@@ -25,7 +22,7 @@ class EmbeddedSentence:
 
     Attributes:
         text: Sentence text
-        embedding: 768-dimensional float32 vector
+        embedding: Float32 embedding vector from Legal-BERTimbau
         citation_metadata: Original citations
     """
 
@@ -54,17 +51,17 @@ class EmbeddingOutput:
 
 class EmbeddingGenerator(PipelineStep):
     """
-    Generate 768-dimensional sentence embeddings with BERTimbau.
+    Generate sentence embeddings with Legal-BERTimbau mean pooling.
 
-    Uses neuralmind/bert-base-portuguese-cased (BERTimbau) as a practical
-    substitute for LegalBERT-pt, which is not publicly available. Mean
-    pooling over all non-padding token states produces the final vector.
-    Sentences exceeding 512 tokens are handled via a sliding window with
-    64-token overlap; the window embeddings are averaged.
+    Uses rufimelo/Legal-BERTimbau-sts-large-ma fine-tuned on legal Portuguese
+    semantic textual similarity tasks. Mean pooling over all non-padding token
+    states produces the final vector. Sentences exceeding 512 tokens are handled
+    via a sliding window with 64-token overlap; the window embeddings are averaged.
     """
 
     def __init__(
         self,
+        model_name: str,
         max_tokens: int = 512,
         overlap_tokens: int = 64,
         batch_size: int = 16,
@@ -76,23 +73,25 @@ class EmbeddingGenerator(PipelineStep):
             max_tokens: BERT context window size
             overlap_tokens: Token overlap between adjacent windows
             batch_size: Number of sentences to encode at once
+            model_name: HuggingFace model identifier to load
         """
         super().__init__(
             step_number=5,
             name="Embedding Generator",
-            description="Generate 768-dim embeddings with BERTimbau mean pooling",
+            description="Generate embeddings with Legal-BERTimbau mean pooling",
         )
         self._max_tokens = max_tokens
         self._overlap_tokens = overlap_tokens
         self._batch_size = batch_size
+        self._model_name = model_name
         self._tokenizer: Optional[PreTrainedTokenizerBase] = None
         self._model: Optional[PreTrainedModel] = None
 
     def _load_model(self) -> None:
-        """Load BERTimbau tokenizer and model lazily."""
+        """Load tokenizer and model lazily using configured model name."""
         if self._model is None:
-            self._tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            self._model = AutoModel.from_pretrained(MODEL_NAME)
+            self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
+            self._model = AutoModel.from_pretrained(self._model_name)
             self._model.eval()
 
     def process(self, input_data: CitationOutput) -> EmbeddingOutput:
@@ -118,10 +117,11 @@ class EmbeddingGenerator(PipelineStep):
                     embedding=vector,
                     citation_metadata=citations,
                 ))
+        embedding_dim = embedded[0].embedding.shape[0] if embedded else 0
         return EmbeddingOutput(
             embedded_sentences=embedded,
-            model_name=MODEL_NAME,
-            embedding_dim=768,
+            model_name=self._model_name,
+            embedding_dim=embedding_dim,
             source_path=input_data.source_path,
         )
 
@@ -205,13 +205,13 @@ class EmbeddingGenerator(PipelineStep):
 
     def validate(self, output_data: EmbeddingOutput) -> bool:
         """
-        Validate that embeddings were generated with correct dimensionality.
+        Validate that embeddings were generated with consistent dimensionality.
 
         Args:
             output_data: EmbeddingOutput to validate
 
         Returns:
-            True if all embeddings have shape (768,)
+            True if all embeddings have the expected shape
         """
         if not output_data.embedded_sentences:
             return False

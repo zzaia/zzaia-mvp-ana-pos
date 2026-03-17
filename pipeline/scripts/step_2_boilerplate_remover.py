@@ -17,6 +17,21 @@ _HEADER_FOOTER_PATTERNS: list[str] = [
     r"(?i)[sú]?[úu]mulas\s+organizadas\s+por[\s\S]{0,20}?ramo\s+do\s+direito"
 ]
 
+_REF_LINE_PATTERNS: list[str] = [
+    r"(?im)^\s*(?:REP)?DJ\s+DATA:\d{2}/\d{2}/\d{4}.*$",
+    r"(?im)^\s*R[A-Z]+STJ\s+VOL\.:\d+\s+PG:\d+.*$",
+    r"(?im)^\s*R[A-Z]+\s+VOL\.:\d+\s+PG:\d+.*$",
+    r"(?im)^\s*LEX[A-Z]+\s+VOL\.:\d+\s+PG:\d+.*$",
+    r"(?im)^\s*scon\.stj\.jus\.br/.*$",
+    r"(?im)^\s*\d{3}\.\d+S\d*\.\s*.*$",
+    r"(?im)^\s*Fonte:\s*$",
+    r"(?im)^\s*Referências Legislativas:\s*$",
+    r"(?im)^\s*Precedentes:\s*$",
+    r"(?i)(?:REP)?DJ\s+DATA:\d{2}/\d{2}/\d{4}\s+PG:\d+",
+    r"(?i)R[A-Z]+STJ\s+VOL\.:\d+\s+PG:\d+",
+    r"(?i)DEL:\d+\s+ANO:\d+\s+(?:REP)?DJ\s+DATA:[^\n]+",
+]
+
 
 @dataclass
 class BoilerplateOutput:
@@ -64,7 +79,7 @@ class BoilerplateRemover(PipelineStep):
 
     def process(self, input_data: NormalizerOutput) -> BoilerplateOutput:
         """
-        Apply regex and TF-IDF boilerplate removal.
+        Apply regex, TF-IDF, and reference line boilerplate removal.
 
         Args:
             input_data: NormalizerOutput with clean_text
@@ -75,9 +90,10 @@ class BoilerplateRemover(PipelineStep):
         text = input_data.clean_text
         text, regex_count = self._apply_regex(text)
         text, tfidf_count = self._apply_tfidf(text)
+        text, ref_count = self._strip_ref_lines(text)
         return BoilerplateOutput(
             filtered_text=text,
-            removed_count=regex_count + tfidf_count,
+            removed_count=regex_count + tfidf_count + ref_count,
             tfidf_threshold=self._tfidf_threshold,
             source_path=input_data.source_path,
         )
@@ -131,6 +147,23 @@ class BoilerplateRemover(PipelineStep):
                 paragraphs[idx] = BOILERPLATE_TOKEN
                 count += 1
         return "\n\n".join(paragraphs), count
+
+    def _strip_ref_lines(self, text: str) -> tuple[str, int]:
+        """
+        Delete legislative reference lines from text without replacement tokens.
+
+        Args:
+            text: Text after TF-IDF processing
+
+        Returns:
+            Tuple of (processed text, count of matched lines removed)
+        """
+        count = 0
+        for pattern in _REF_LINE_PATTERNS:
+            matches = re.findall(pattern, text)
+            count += len(matches)
+            text = re.sub(pattern, "", text)
+        return text, count
 
     def validate(self, output_data: BoilerplateOutput) -> bool:
         """

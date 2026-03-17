@@ -46,7 +46,6 @@ class SumulaSearchIndex:
         self,
         embedding_output: EmbeddingOutput,
         bertopic_output: BerTopicOutput,
-        model_name: str = "neuralmind/bert-base-portuguese-cased",
     ):
         """
         Build FAISS index from pre-computed embeddings and load query model.
@@ -54,15 +53,14 @@ class SumulaSearchIndex:
         Args:
             embedding_output: Step 5 output with pre-computed sentence embeddings
             bertopic_output: Step 6 output with topic assignments and labels
-            model_name: HuggingFace model for query embedding
         """
         self._sentences = [s.text for s in embedding_output.embedded_sentences]
         self._topic_lookup: dict[str, tuple[int, str]] = {}
         for s in bertopic_output.topiced_sentences:
             label = bertopic_output.topic_labels.get(s.topic_id, str(s.topic_id))
             self._topic_lookup[s.text] = (s.topic_id, label)
-        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self._model = AutoModel.from_pretrained(model_name)
+        self._tokenizer = AutoTokenizer.from_pretrained(embedding_output.model_name)
+        self._model = AutoModel.from_pretrained(embedding_output.model_name)
         self._model.eval()
         embeddings = np.stack([s.embedding for s in embedding_output.embedded_sentences])
         self._index = self._build_index(embeddings)
@@ -92,7 +90,8 @@ class SumulaSearchIndex:
             Populated faiss.IndexFlatIP ready for search
         """
         normalized = self._normalize(embeddings)
-        index = faiss.IndexFlatIP(768)
+        dim = normalized.shape[1]
+        index = faiss.IndexFlatIP(dim)
         index.add(normalized)
         return index
 
