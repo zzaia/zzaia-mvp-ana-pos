@@ -1,47 +1,66 @@
-"""Step 8: Cluster statistics with post-hoc case type labeling via regex on representative sentence."""
+"""Step 8: Cluster statistics with post-hoc case type labeling via BERTimbau seed embedding cosine similarity."""
 
-import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
+from transformers import AutoModel, AutoTokenizer
 
 from pipeline_step import PipelineStep
 from step_7_hdbscan_clusterer import ClusteringOutput
 
-_CASE_PATTERNS: dict[str, list[str]] = {
+_CASE_SEEDS: dict[str, list[str]] = {
     "CasaRoubada": [
-        r"\b(residência|domicílio|casa|imóvel|apartamento)\b",
-        r"\b(roubad[oa]|furtad[oa]|invadid[oa]|arrombad[oa])\b",
+        "O réu arrombou a porta da residência da vítima e subtraiu bens do interior do imóvel.",
+        "Os acusados invadiram o domicílio enquanto a família dormia e levaram objetos de valor.",
+        "A residência foi furtada durante a madrugada, com arrombamento da janela dos fundos.",
     ],
     "AssaltoArmado": [
-        r"\b(arma|armad[oa]|revólver|pistola|faca|arma\s+de\s+fogo)\b",
-        r"\b(assalto|roubo|rendeu|ameaçou)\b",
+        "O acusado, portando revólver calibre 38, rendeu a vítima e subtraiu sua carteira e celular.",
+        "Mediante grave ameaça com arma de fogo, os réus praticaram roubo na via pública.",
+        "O assaltante armado com faca abordou a vítima e exigiu a entrega de seus pertences.",
     ],
     "HomicidioDoloso": [
-        r"\b(homicídio|matar|matou|vítima\s+fatal|óbito|morte\s+dolosa|ceifou\s+a\s+vida)\b",
+        "O réu, com dolo de matar, desferiu facadas na vítima que veio a óbito no local.",
+        "O acusado efetuou disparos de arma de fogo com intenção homicida, causando a morte da vítima.",
+        "A vítima foi assassinada com múltiplos golpes de instrumento contundente pelo réu.",
     ],
     "TraficoDrogas": [
-        r"\b(tráfico|entorpecente|droga|cocaína|maconha|crack|substância\s+ilícita)\b",
+        "O réu foi preso em flagrante transportando quilogramas de cocaína embalados para venda.",
+        "Os acusados mantinham ponto de venda de crack e maconha com divisão de funções entre si.",
+        "Foram apreendidos entorpecentes e materiais para embalo, caracterizando tráfico de drogas.",
     ],
     "ViolenciaDomestica": [
-        r"\b(violência\s+doméstica|Lei\s+Maria\s+da\s+Penha|cônjuge|companheiro|ameaça|lesão\s+corporal\s+doméstica)\b",
+        "O réu agrediu sua companheira no ambiente doméstico, causando lesões corporais, respondendo nos termos da Lei Maria da Penha.",
+        "O acusado ameaçou de morte sua esposa reiteradamente no contexto de violência doméstica.",
+        "A vítima sofreu agressões físicas e psicológicas praticadas pelo cônjuge no lar conjugal.",
     ],
     "FurtoCelular": [
-        r"\b(celular|smartphone|aparelho\s+telefônico|furto\s+de\s+telefone)\b",
+        "O réu subtraiu o aparelho celular da vítima mediante subtração simples em local público.",
+        "O acusado furtou smartphone da vítima que estava distraída em estabelecimento comercial.",
+        "O celular foi furtado da bolsa da ofendida no interior do transporte público coletivo.",
     ],
     "AcidenteTransito": [
-        r"\b(acidente\s+de\s+trânsito|colisão|atropelamento|veículo|embriagado\s+ao\s+volante|CNH)\b",
+        "O réu conduzia veículo automotor em estado de embriaguez e colidiu com outro automóvel.",
+        "O acusado atropelou a vítima na faixa de pedestres ao avançar o sinal vermelho em alta velocidade.",
+        "A colisão entre os veículos ocorreu por imprudência do réu que não respeitou a preferencial.",
     ],
     "EstelionatoFraude": [
-        r"\b(estelionato|fraude|falsidade\s+ideológica|documento\s+falso|golpe|enganou|iludiu)\b",
+        "O réu induziu a vítima em erro mediante documentos falsos para obter vantagem patrimonial ilícita.",
+        "O acusado aplicou golpe do falso investimento, lesando dezenas de vítimas com promessas fraudulentas.",
+        "Mediante falsidade ideológica, o réu obteve crédito bancário em nome de terceiro prejudicado.",
     ],
     "CrimesFinanceiros": [
-        r"\b(lavagem\s+de\s+dinheiro|peculato|corrupção|desvio\s+de\s+verbas|improbidade|enriquecimento\s+ilícito)\b",
+        "O réu desviou verbas públicas em proveito próprio, configurando peculato doloso.",
+        "Os acusados praticaram lavagem de dinheiro ocultando a origem de recursos provenientes de corrupção.",
+        "O agente público corrompeu licitações municipais, causando enriquecimento ilícito e dano ao erário.",
     ],
     "LesaoCorporal": [
-        r"\b(lesão\s+corporal|lesões\s+corporais|ferimento|agrediu|espancou|socou|chutou)\b",
+        "O réu agrediu a vítima com socos e chutes, causando lesões corporais de natureza leve.",
+        "O acusado espancou o ofendido em via pública, produzindo ferimentos que necessitaram de atendimento médico.",
+        "A vítima sofreu lesões corporais graves em razão de agressão praticada pelo réu com instrumento contundente.",
     ],
 }
 
@@ -53,9 +72,10 @@ class ClusterStats:
 
     Attributes:
         cluster_id: HDBSCAN cluster label
-        case_type: Post-hoc case type assigned via regex on representative sentence
+        case_type: Post-hoc case type assigned via BERTimbau seed embedding cosine similarity
         frequency: Number of sentences in this cluster
         representative_sentence: Sentence closest to the centroid
+        non_representative_sentence: Sentence farthest from the centroid
         intra_similarity: Mean cosine similarity among cluster members
         centroid: Mean embedding vector for this cluster
     """
@@ -64,6 +84,7 @@ class ClusterStats:
     case_type: str
     frequency: int
     representative_sentence: str
+    non_representative_sentence: str
     intra_similarity: float
     centroid: np.ndarray
 
@@ -96,20 +117,35 @@ class StatisticsGenerator(PipelineStep):
 
     For each HDBSCAN cluster, calculates: sentence frequency, the
     representative sentence (nearest to centroid), and mean intra-cluster
-    cosine similarity. After computing the representative sentence, regex
-    patterns from _CASE_PATTERNS are applied to assign a case type label
-    to the cluster. Cross-cluster cosine similarity between centroids
+    cosine similarity. Case type labels are assigned by comparing the cluster
+    centroid to pre-computed BERTimbau seed embedding cosine similarity for
+    each case type. Cross-cluster cosine similarity between centroids
     reveals thematic overlap. Noise sentences (cluster_id == -1) are
     excluded from cluster statistics.
     """
 
-    def __init__(self):
-        """Initialize statistics generator."""
+    def __init__(
+        self,
+        model_name: str = "neuralmind/bert-base-portuguese-cased",
+        similarity_threshold: float = 0.5,
+    ):
+        """
+        Initialize statistics generator.
+
+        Args:
+            model_name: HuggingFace model identifier for BERTimbau
+            similarity_threshold: Minimum cosine similarity to assign a named case type; below this returns Unknown
+        """
         super().__init__(
             step_number=8,
             name="Statistics Generator",
             description="Compute frequency tables, similarity, and post-hoc case type labels",
         )
+        self._similarity_threshold = similarity_threshold
+        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self._model = AutoModel.from_pretrained(model_name)
+        self._model.eval()
+        self._seed_embeddings = self._embed_seeds()
 
     def process(self, input_data: ClusteringOutput) -> StatisticsOutput:
         """
@@ -140,9 +176,68 @@ class StatisticsGenerator(PipelineStep):
             source_path=input_data.source_path,
         )
 
+    def _embed_text(self, text: str) -> np.ndarray:
+        """
+        Embed a single text string using BERTimbau mean pooling.
+
+        Args:
+            text: Input text to embed
+
+        Returns:
+            768-dim numpy array
+        """
+        tokens = self._tokenizer(
+            text,
+            max_length=512,
+            truncation=True,
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            output = self._model(**tokens)
+        hidden: torch.Tensor = output.last_hidden_state
+        mask: torch.Tensor = tokens["attention_mask"].unsqueeze(-1).float()
+        summed = (hidden * mask).sum(dim=1)
+        counts = mask.sum(dim=1).clamp(min=1)
+        return (summed / counts).squeeze(0).numpy()
+
+    def _embed_seeds(self) -> dict[str, np.ndarray]:
+        """
+        Compute mean seed embedding per case type from _CASE_SEEDS.
+
+        Returns:
+            Dictionary mapping case type name to mean 768-dim embedding
+        """
+        result: dict[str, np.ndarray] = {}
+        for case_type, seeds in _CASE_SEEDS.items():
+            seed_vectors = np.stack([self._embed_text(seed) for seed in seeds])
+            result[case_type] = seed_vectors.mean(axis=0)
+        return result
+
+    def _label_cluster_by_embedding(self, cluster_centroid: np.ndarray) -> str:
+        """
+        Assign a case type by cosine similarity between cluster centroid and seed embeddings.
+
+        Args:
+            cluster_centroid: Mean embedding vector for the cluster
+
+        Returns:
+            Case type name with highest similarity above threshold, or Unknown
+        """
+        centroid_2d = cluster_centroid.reshape(1, -1)
+        best_case_type = "Unknown"
+        best_similarity = -1.0
+        for case_type, seed_embedding in self._seed_embeddings.items():
+            similarity = float(cosine_similarity(centroid_2d, seed_embedding.reshape(1, -1))[0, 0])
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_case_type = case_type
+        if best_similarity >= self._similarity_threshold:
+            return best_case_type
+        return "Unknown"
+
     def _compute_cluster_stats(self, cluster_id: int, members: list) -> ClusterStats:
         """
-        Compute statistics for one cluster and assign case type via regex.
+        Compute statistics for one cluster and assign case type via seed embedding similarity.
 
         Args:
             cluster_id: HDBSCAN cluster label
@@ -155,34 +250,18 @@ class StatisticsGenerator(PipelineStep):
         centroid = embeddings.mean(axis=0)
         dists = cosine_similarity(embeddings, centroid.reshape(1, -1)).flatten()
         representative = members[int(np.argmax(dists))].text
+        non_representative = members[int(np.argmin(dists))].text
         intra_sim = float(np.mean(cosine_similarity(embeddings)))
-        case_type = self._label_cluster(representative)
+        case_type = self._label_cluster_by_embedding(centroid)
         return ClusterStats(
             cluster_id=cluster_id,
             case_type=case_type,
             frequency=len(members),
             representative_sentence=representative,
+            non_representative_sentence=non_representative,
             intra_similarity=round(intra_sim, 4),
             centroid=centroid,
         )
-
-    def _label_cluster(self, representative_sentence: str) -> str:
-        """
-        Assign a case type by applying regex patterns to the representative sentence.
-
-        Args:
-            representative_sentence: Sentence closest to the cluster centroid
-
-        Returns:
-            First matching case type name or Unknown if no patterns match
-        """
-        for case_type, patterns in _CASE_PATTERNS.items():
-            if all(re.search(p, representative_sentence, re.IGNORECASE) for p in patterns):
-                return case_type
-        for case_type, patterns in _CASE_PATTERNS.items():
-            if any(re.search(p, representative_sentence, re.IGNORECASE) for p in patterns):
-                return case_type
-        return "Unknown"
 
     def _aggregate_case_type_frequency(
         self, cluster_stats: list[ClusterStats]

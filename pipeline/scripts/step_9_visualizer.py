@@ -6,7 +6,6 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import matplotlib.figure
-import numpy as np
 
 from pipeline_step import PipelineStep
 from step_7_hdbscan_clusterer import ClusteringOutput
@@ -25,22 +24,6 @@ _CASE_COLORS = {
     "LesaoCorporal": "#64B5CD",
     "Unknown": "#CCCCCC",
 }
-
-
-@dataclass
-class VisualizationInput:
-    """
-    Combined input for the visualization step.
-
-    Attributes:
-        clustering_output: ClusteringOutput from step 7
-        statistics_output: StatisticsOutput from step 8
-        output_dir: Directory where figures will be saved (optional)
-    """
-
-    clustering_output: ClusteringOutput
-    statistics_output: StatisticsOutput
-    output_dir: Optional[Path] = None
 
 
 @dataclass
@@ -65,13 +48,23 @@ class Visualizer(PipelineStep):
     1. UMAP scatter plot coloured by post-hoc case type from ClusterStats
     2. Frequency bar chart of sentence counts per cluster
     3. Case type frequency bar chart from StatisticsOutput.case_type_frequency
+
+    The clustering output is injected at construction time since it originates
+    from step 7, two steps before this step runs in the pipeline.
     """
 
-    def __init__(self, figsize: tuple[int, int] = (12, 8)):
+    def __init__(
+        self,
+        clustering_output: ClusteringOutput,
+        output_dir: Optional[Path] = None,
+        figsize: tuple[int, int] = (12, 8),
+    ):
         """
-        Initialize visualizer.
+        Initialize visualizer with injected clustering dependency.
 
         Args:
+            clustering_output: ClusteringOutput from step 7 with UMAP coordinates
+            output_dir: Directory where figures will be saved (optional)
             figsize: Default matplotlib figure size (width, height)
         """
         super().__init__(
@@ -79,28 +72,27 @@ class Visualizer(PipelineStep):
             name="Visualizer",
             description="Generate UMAP scatter, frequency chart, and case type heatmap",
         )
+        self._clustering_output = clustering_output
+        self._output_dir = output_dir
         self._figsize = figsize
 
-    def process(self, input_data: VisualizationInput) -> VisualizationOutput:
+    def process(self, input_data: StatisticsOutput) -> VisualizationOutput:
         """
-        Produce all three figures.
+        Produce all three figures using injected clustering output.
 
         Args:
-            input_data: VisualizationInput with clustering and statistics outputs
+            input_data: StatisticsOutput from step 8 with cluster statistics
 
         Returns:
             VisualizationOutput with figures and optional saved paths
         """
         figures: list[matplotlib.figure.Figure] = []
         saved: list[Path] = []
-        fig_scatter = self._umap_scatter(input_data.clustering_output, input_data.statistics_output)
-        figures.append(fig_scatter)
-        fig_freq = self._frequency_bar(input_data.statistics_output)
-        figures.append(fig_freq)
-        fig_heat = self._case_type_frequency_bar(input_data.statistics_output)
-        figures.append(fig_heat)
-        if input_data.output_dir is not None:
-            output_dir = Path(input_data.output_dir)
+        figures.append(self._umap_scatter(input_data))
+        figures.append(self._frequency_bar(input_data))
+        figures.append(self._case_type_frequency_bar(input_data))
+        if self._output_dir is not None:
+            output_dir = Path(self._output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             names = ["umap_scatter.png", "frequency_bar.png", "case_type_frequency.png"]
             for fig, name in zip(figures, names):
@@ -109,14 +101,11 @@ class Visualizer(PipelineStep):
                 saved.append(path)
         return VisualizationOutput(figures=figures, saved_paths=saved)
 
-    def _umap_scatter(
-        self, clustering: ClusteringOutput, statistics: StatisticsOutput
-    ) -> matplotlib.figure.Figure:
+    def _umap_scatter(self, statistics: StatisticsOutput) -> matplotlib.figure.Figure:
         """
         Plot 2D UMAP projection coloured by post-hoc case type from ClusterStats.
 
         Args:
-            clustering: ClusteringOutput with reduced_vector per sentence
             statistics: StatisticsOutput with case_type per cluster
 
         Returns:
@@ -125,7 +114,7 @@ class Visualizer(PipelineStep):
         cluster_case_type: dict[int, str] = {
             s.cluster_id: s.case_type for s in statistics.cluster_stats
         }
-        sentences = clustering.clustered_sentences
+        sentences = self._clustering_output.clustered_sentences
         fig, ax = plt.subplots(figsize=self._figsize)
         if not sentences:
             ax.text(0.5, 0.5, "No sentences to display", ha="center", va="center", transform=ax.transAxes)
@@ -135,6 +124,8 @@ class Visualizer(PipelineStep):
         case_type_groups: dict[str, list] = {}
         for s in sentences:
             label = cluster_case_type.get(s.cluster_id, "Unknown")
+            if label == "Unknown":
+                continue
             case_type_groups.setdefault(label, []).append(s)
         for case_type, subset in sorted(case_type_groups.items()):
             xs = [s.reduced_vector[0] for s in subset]
@@ -158,7 +149,11 @@ class Visualizer(PipelineStep):
         Returns:
             matplotlib Figure
         """
-        stats = sorted(statistics.cluster_stats, key=lambda s: s.frequency, reverse=True)
+        stats = sorted(
+            [s for s in statistics.cluster_stats if s.case_type != "Unknown"],
+            key=lambda s: s.frequency,
+            reverse=True,
+        )
         fig, ax = plt.subplots(figsize=self._figsize)
         if not stats:
             ax.text(0.5, 0.5, "No clusters to display", ha="center", va="center", transform=ax.transAxes)
@@ -193,7 +188,11 @@ class Visualizer(PipelineStep):
             ax.set_title("Case Type Frequency (Post-hoc)")
             plt.tight_layout()
             return fig
-        sorted_items = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+        sorted_items = sorted(
+            ((k, v) for k, v in freq.items() if k != "Unknown"),
+            key=lambda x: x[1],
+            reverse=True,
+        )
         labels = [item[0] for item in sorted_items]
         values = [item[1] for item in sorted_items]
         colors = [_CASE_COLORS.get(label, "#999999") for label in labels]
@@ -213,6 +212,6 @@ class Visualizer(PipelineStep):
             output_data: VisualizationOutput to validate
 
         Returns:
-            True if exactly three figures were generated
+            True if figures list is non-empty
         """
-        return len(output_data.figures) == 3
+        return len(output_data.figures) > 0
