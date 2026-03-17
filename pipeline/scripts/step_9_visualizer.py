@@ -22,6 +22,16 @@ _CASE_COLORS = {
     "EstelionatoFraude": "#8C8C8C",
     "CrimesFinanceiros": "#CCB974",
     "LesaoCorporal": "#64B5CD",
+    "DireitoAdministrativo": "#2166AC",
+    "DireitoTributario": "#4DAC26",
+    "DireitoPrevidenciario": "#D01C8B",
+    "DireitoConsumidor": "#F1B6DA",
+    "DireitoCivil": "#B8E186",
+    "DireitoProcessual": "#762A83",
+    "DireitoContratual": "#E66101",
+    "DireitoAmbiental": "#1A9641",
+    "DireitoTrabalhista": "#D7191C",
+    "DireitoConstitucional": "#2C7BB6",
     "Unknown": "#CCCCCC",
 }
 

@@ -14,14 +14,7 @@ from step_1_encoding_normalizer import NormalizerOutput
 BOILERPLATE_TOKEN = "<BOILERPLATE>"
 
 _HEADER_FOOTER_PATTERNS: list[str] = [
-    r"(?m)^\s*página\s+\d+\s+de\s+\d+\s*$",
-    r"(?m)^\s*\d+\s*/\s*\d+\s*$",
-    r"(?im)^(tribunal|vara|juízo|comarca|foro)\b.{0,120}$",
-    r"(?im)^\s*poder judiciário\s*$",
-    r"(?im)^\s*república federativa do brasil\s*$",
-    r"(?im)^\s*certifico e dou fé\.?\s*$",
-    r"(?im)^\s*este documento é cópia do original.*$",
-    r"(?im)^\s*assinado digitalmente.*$",
+    r"(?i)[sú]?[úu]mulas\s+organizadas\s+por[\s\S]{0,20}?ramo\s+do\s+direito"
 ]
 
 
