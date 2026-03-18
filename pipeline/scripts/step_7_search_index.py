@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import faiss
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from step_6_embedding_generator import EmbeddingOutput
+from pipeline_step import PipelineStep
+from step_6_embedding_generator import EmbeddingOutput, EmbeddedSentence
 
 
 @dataclass
@@ -30,6 +31,24 @@ class SearchResult:
     similarity: float
     label: str
     sumula_number: int
+
+
+@dataclass
+class SearchIndexOutput:
+    """
+    Output of the search index step.
+
+    Attributes:
+        index: Populated SumulaSearchIndex ready for queries
+        results: Search results for the configured query
+        query: Query string used to produce results
+        embedded_sentences: Propagated embedded sentences for downstream use
+    """
+
+    index: SumulaSearchIndex
+    results: list[SearchResult]
+    query: str
+    embedded_sentences: list[EmbeddedSentence] = field(default_factory=list)
 
 
 class SumulaSearchIndex:
@@ -136,3 +155,59 @@ class SumulaSearchIndex:
                 sumula_number=sentence.sumula_number,
             ))
         return results
+
+
+class SearchIndexBuilder(PipelineStep):
+    """
+    Build a FAISS semantic search index and execute the configured query.
+
+    Wraps SumulaSearchIndex creation and a full-corpus search in the
+    PipelineStep contract so that the result is persisted as a checkpoint.
+    """
+
+    def __init__(self, query: str, top_k: int = 1000):
+        """
+        Initialize search index builder.
+
+        Args:
+            query: Portuguese legal query to run against the index
+            top_k: Number of results to retrieve for visualization
+        """
+        super().__init__(
+            step_number=7,
+            name="Search Index",
+            description="Build FAISS index and execute semantic search query",
+        )
+        self._query = query
+        self._top_k = top_k
+
+    def process(self, input_data: EmbeddingOutput) -> SearchIndexOutput:
+        """
+        Build index, run query, and return output with results.
+
+        Args:
+            input_data: EmbeddingOutput from step 6
+
+        Returns:
+            SearchIndexOutput with populated index and query results
+        """
+        index = SumulaSearchIndex(embedding_output=input_data)
+        results = index.search(self._query, top_k=self._top_k)
+        return SearchIndexOutput(
+            index=index,
+            results=results,
+            query=self._query,
+            embedded_sentences=input_data.embedded_sentences,
+        )
+
+    def validate(self, output_data: SearchIndexOutput) -> bool:
+        """
+        Validate that the index produced at least one result.
+
+        Args:
+            output_data: SearchIndexOutput to validate
+
+        Returns:
+            True if results list is non-empty
+        """
+        return len(output_data.results) > 0
