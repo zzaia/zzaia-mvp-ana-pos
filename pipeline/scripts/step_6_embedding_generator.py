@@ -1,4 +1,4 @@
-"""Step 5: Sentence embedding using BERTimbau with mean pooling and sliding window."""
+"""Step 6: Sentence embedding using BERTimbau with mean pooling and sliding window."""
 
 from __future__ import annotations
 
@@ -10,24 +10,29 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from pipeline_step import PipelineStep
-from step_4_citation_normalizer import CitationOutput
+from step_5_labeler import LabeledOutput, LabeledSentence
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+
 @dataclass
 class EmbeddedSentence:
     """
-    A sentence augmented with its embedding vector.
+    A súmula sentence augmented with its embedding vector and label metadata.
 
     Attributes:
         text: Sentence text
-        embedding: Float32 embedding vector from Legal-BERTimbau
-        citation_metadata: Original citations
+        embedding: Float32 embedding vector from BERTimbau
+        label: Composite label from the labeling step
+        sumula_number: Numeric súmula identifier
+        citation_metadata: Original citation token mapping
     """
 
     text: str
     embedding: np.ndarray
+    label: str
+    sumula_number: int
     citation_metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -37,7 +42,7 @@ class EmbeddingOutput:
     Output of the embedding generation step.
 
     Attributes:
-        embedded_sentences: Sentences with 768-dim embedding vectors
+        embedded_sentences: Sentences with embedding vectors and label metadata
         model_name: HuggingFace model identifier used
         embedding_dim: Dimensionality of each embedding vector
         source_path: Propagated from previous step
@@ -51,12 +56,12 @@ class EmbeddingOutput:
 
 class EmbeddingGenerator(PipelineStep):
     """
-    Generate sentence embeddings with Legal-BERTimbau mean pooling.
+    Generate sentence embeddings with BERTimbau mean pooling.
 
-    Uses rufimelo/Legal-BERTimbau-sts-large-ma fine-tuned on legal Portuguese
-    semantic textual similarity tasks. Mean pooling over all non-padding token
-    states produces the final vector. Sentences exceeding 512 tokens are handled
-    via a sliding window with 64-token overlap; the window embeddings are averaged.
+    Uses a BERTimbau model fine-tuned on legal Portuguese semantic textual
+    similarity tasks. Mean pooling over all non-padding token states produces
+    the final vector. Sentences exceeding max_tokens are handled via a sliding
+    window with overlap_tokens; the window embeddings are averaged.
     """
 
     def __init__(
@@ -70,15 +75,15 @@ class EmbeddingGenerator(PipelineStep):
         Initialize embedding generator.
 
         Args:
+            model_name: HuggingFace model identifier to load
             max_tokens: BERT context window size
             overlap_tokens: Token overlap between adjacent windows
             batch_size: Number of sentences to encode at once
-            model_name: HuggingFace model identifier to load
         """
         super().__init__(
-            step_number=5,
+            step_number=6,
             name="Embedding Generator",
-            description="Generate embeddings with Legal-BERTimbau mean pooling",
+            description="Generate embeddings with BERTimbau mean pooling",
         )
         self._max_tokens = max_tokens
         self._overlap_tokens = overlap_tokens
@@ -94,28 +99,30 @@ class EmbeddingGenerator(PipelineStep):
             self._model = AutoModel.from_pretrained(self._model_name)
             self._model.eval()
 
-    def process(self, input_data: CitationOutput) -> EmbeddingOutput:
+    def process(self, input_data: LabeledOutput) -> EmbeddingOutput:
         """
-        Embed all sentences from citation normalization output.
+        Embed all súmula sentences from labeled output.
 
         Args:
-            input_data: CitationOutput with sentences and citation_metadata
+            input_data: LabeledOutput with labeled sentences
 
         Returns:
-            EmbeddingOutput with 768-dim embedding per sentence
+            EmbeddingOutput with embedding vectors and propagated label metadata
         """
         self._load_model()
         embedded: list[EmbeddedSentence] = []
-        sentences = list(zip(input_data.sentences, input_data.citation_metadata))
+        sentences = input_data.labeled_sentences
         for i in range(0, len(sentences), self._batch_size):
-            batch = sentences[i: i + self._batch_size]
-            texts = [text for text, _ in batch]
+            batch: list[LabeledSentence] = sentences[i: i + self._batch_size]
+            texts = [s.text for s in batch]
             vectors = self._embed_batch(texts)
-            for (text, citations), vector in zip(batch, vectors):
+            for sentence, vector in zip(batch, vectors):
                 embedded.append(EmbeddedSentence(
-                    text=text,
+                    text=sentence.text,
                     embedding=vector,
-                    citation_metadata=citations,
+                    label=sentence.label,
+                    sumula_number=sentence.sumula_number,
+                    citation_metadata=sentence.citation_metadata,
                 ))
         embedding_dim = embedded[0].embedding.shape[0] if embedded else 0
         return EmbeddingOutput(
@@ -133,7 +140,7 @@ class EmbeddingGenerator(PipelineStep):
             texts: List of sentence strings
 
         Returns:
-            List of 768-dim numpy arrays in the same order
+            List of numpy embedding arrays in the same order
         """
         vectors: list[np.ndarray] = []
         for text in texts:
@@ -149,7 +156,7 @@ class EmbeddingGenerator(PipelineStep):
             text: Sentence text
 
         Returns:
-            768-dim mean-pooled embedding
+            Mean-pooled embedding array
         """
         tokens = self._tokenizer(
             text,
@@ -170,7 +177,7 @@ class EmbeddingGenerator(PipelineStep):
             tokens: Tokenizer output dict
 
         Returns:
-            768-dim numpy array
+            Numpy embedding array
         """
         with torch.no_grad():
             output = self._model(**tokens)
@@ -188,7 +195,7 @@ class EmbeddingGenerator(PipelineStep):
             input_ids: Full token id sequence
 
         Returns:
-            768-dim averaged embedding
+            Averaged embedding array
         """
         stride = self._max_tokens - self._overlap_tokens
         window_embeddings: list[np.ndarray] = []

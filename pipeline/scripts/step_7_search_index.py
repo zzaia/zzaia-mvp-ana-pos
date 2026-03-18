@@ -1,4 +1,4 @@
-"""Step 10: FAISS semantic search index over BERTimbau-embedded Súmulas."""
+"""Step 7: FAISS semantic search index over labeled BERTimbau-embedded Súmulas."""
 
 from __future__ import annotations
 
@@ -9,60 +9,50 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from step_5_embedding_generator import EmbeddingOutput
-from step_6_bertopic import BerTopicOutput
+from step_6_embedding_generator import EmbeddingOutput
 
 
 @dataclass
 class SearchResult:
     """
-    A single semantic search result with topic context.
+    A single semantic search result with label metadata.
 
     Attributes:
-        rank: 1-based result rank
+        rank: 1-based result position
         text: Súmula text content
-        similarity: Cosine similarity to query (0-1)
-        topic_id: BERTopic topic this sentence belongs to
-        topic_label: Auto-generated topic keyword label
+        similarity: Cosine similarity to query (0–1)
+        label: Composite label from the labeling step
+        sumula_number: Numeric súmula identifier
     """
 
     rank: int
     text: str
     similarity: float
-    topic_id: int
-    topic_label: str
+    label: str
+    sumula_number: int
 
 
 class SumulaSearchIndex:
     """
-    FAISS-based semantic search index over BERTimbau-embedded Súmulas.
+    FAISS semantic search index over labeled Súmula embeddings.
 
-    Builds an inner-product index from pre-computed embeddings.
-    At search time, embeds the query with BERTimbau and returns
-    the top-k most semantically similar Súmulas with topic context.
+    Builds a faiss.IndexFlatIP from L2-normalized pre-computed embeddings.
+    At search time, encodes the Portuguese query with the same BERTimbau model
+    and returns the top-k most semantically similar Súmulas with label context.
     """
 
-    def __init__(
-        self,
-        embedding_output: EmbeddingOutput,
-        bertopic_output: BerTopicOutput,
-    ):
+    def __init__(self, embedding_output: EmbeddingOutput):
         """
-        Build FAISS index from pre-computed embeddings and load query model.
+        Build FAISS index from pre-computed embeddings and load the query model.
 
         Args:
-            embedding_output: Step 5 output with pre-computed sentence embeddings
-            bertopic_output: Step 6 output with topic assignments and labels
+            embedding_output: Step 6 output with pre-computed sentence embeddings
         """
-        self._sentences = [s.text for s in embedding_output.embedded_sentences]
-        self._topic_lookup: dict[str, tuple[int, str]] = {}
-        for s in bertopic_output.topiced_sentences:
-            label = bertopic_output.topic_labels.get(s.topic_id, str(s.topic_id))
-            self._topic_lookup[s.text] = (s.topic_id, label)
+        self._sentences = embedding_output.embedded_sentences
         self._tokenizer = AutoTokenizer.from_pretrained(embedding_output.model_name)
         self._model = AutoModel.from_pretrained(embedding_output.model_name)
         self._model.eval()
-        embeddings = np.stack([s.embedding for s in embedding_output.embedded_sentences])
+        embeddings = np.stack([s.embedding for s in self._sentences])
         self._index = self._build_index(embeddings)
 
     def _normalize(self, vectors: np.ndarray) -> np.ndarray:
@@ -84,7 +74,7 @@ class SumulaSearchIndex:
         Create and populate a FAISS inner-product index from normalized embeddings.
 
         Args:
-            embeddings: (n, 768) raw embedding matrix
+            embeddings: (n, d) raw embedding matrix
 
         Returns:
             Populated faiss.IndexFlatIP ready for search
@@ -103,7 +93,7 @@ class SumulaSearchIndex:
             text: Portuguese legal query text
 
         Returns:
-            L2-normalized 768-dim float32 vector shaped (1, 768)
+            L2-normalized float32 vector shaped (1, d)
         """
         tokens = self._tokenizer(
             text,
@@ -137,13 +127,12 @@ class SumulaSearchIndex:
         for rank, (score, idx) in enumerate(zip(scores[0], indices[0]), start=1):
             if idx < 0 or idx >= len(self._sentences):
                 continue
-            text = self._sentences[idx]
-            topic_id, topic_label = self._topic_lookup.get(text, (-1, "unknown"))
+            sentence = self._sentences[idx]
             results.append(SearchResult(
                 rank=rank,
-                text=text,
+                text=sentence.text,
                 similarity=float(score),
-                topic_id=topic_id,
-                topic_label=topic_label,
+                label=sentence.label,
+                sumula_number=sentence.sumula_number,
             ))
         return results
