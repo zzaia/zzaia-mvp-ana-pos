@@ -54,7 +54,7 @@ class SimilarityVisualizer(PipelineStep):
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
     def _build_histogram(
-        self, results: list[SearchResult], query: str
+        self, results: list[SearchResult], query: str, accumulated_similarity: float
     ) -> matplotlib.figure.Figure:
         """
         Build histogram of cosine similarity distribution across all súmulas.
@@ -62,6 +62,7 @@ class SimilarityVisualizer(PipelineStep):
         Args:
             results: SearchResult list covering all súmulas in the corpus
             query: Original query string for the chart title
+            accumulated_similarity: Sum of cosine similarities across all results
 
         Returns:
             matplotlib Figure with the similarity histogram
@@ -76,6 +77,14 @@ class SimilarityVisualizer(PipelineStep):
             fontsize=11,
             pad=10,
         )
+        ax2 = ax.twinx()
+        ax2.set_ylabel(
+            f"Accumulated Similarity: {accumulated_similarity:.2f}",
+            fontsize=10,
+            color="steelblue",
+            labelpad=12,
+        )
+        ax2.set_yticks([])
         plt.tight_layout()
         return fig
 
@@ -113,7 +122,7 @@ class SimilarityVisualizer(PipelineStep):
         """
         outputs = [input_data] if isinstance(input_data, SearchIndexOutput) else input_data
         first = outputs[0]
-        histogram_fig = self._build_histogram(first.results, first.query)
+        histogram_fig = self._build_histogram(first.results, first.query, first.accumulated_similarity)
         saved_paths: list[Path] = []
         histogram_path = self._save_figure(histogram_fig, "similarity_histogram.png")
         if histogram_path:

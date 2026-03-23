@@ -43,12 +43,18 @@ class SearchIndexOutput:
         results: Search results for the configured query
         query: Query string used to produce results
         embedded_sentences: Propagated embedded sentences for downstream use
+        accumulated_similarity: Sum of cosine similarities across all results (computed property)
     """
 
     index: SumulaSearchIndex
     results: list[SearchResult]
     query: str
     embedded_sentences: list[EmbeddedSentence] = field(default_factory=list)
+
+    @property
+    def accumulated_similarity(self) -> float:
+        """Sum of cosine similarities across all search results."""
+        return sum(r.similarity for r in self.results)
 
 
 class SumulaSearchIndex:
