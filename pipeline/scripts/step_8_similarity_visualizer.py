@@ -9,6 +9,7 @@ from typing import Any, Optional
 import matplotlib.axes
 import matplotlib.figure
 import matplotlib.pyplot as plt
+import numpy as np
 
 from pipeline_step import PipelineStep
 from step_7_search_index import SearchIndexOutput
@@ -38,12 +39,13 @@ class SimilarityVisualizer(PipelineStep):
     The figure is saved to output_dir.
     """
 
-    def __init__(self, output_dir: Optional[Path] = None):
+    def __init__(self, output_dir: Optional[Path] = None, similarity_threshold: float = 0.65):
         """
         Initialize similarity visualizer.
 
         Args:
             output_dir: Directory for saving figure images; created if absent
+            similarity_threshold: Cosine similarity cutoff for threshold-based metrics
         """
         super().__init__(
             step_number=8,
@@ -51,6 +53,7 @@ class SimilarityVisualizer(PipelineStep):
             description="Plot similarity intensity across all Súmulas sorted by topic",
         )
         self._output_dir = Path(output_dir) if output_dir else None
+        self._similarity_threshold = similarity_threshold
         if self._output_dir:
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -60,9 +63,10 @@ class SimilarityVisualizer(PipelineStep):
         """
         Build vertically stacked histograms of cosine similarity, one per query.
 
-        All subplots share the same X axis scale. Each subplot shows the
-        similarity distribution for one query with the accumulated similarity
-        displayed as a right-side twin-axis label.
+        Subplots are sorted descending by accumulated similarity. All subplots
+        share the same X axis. Bars are colored by legal area label. Vertical
+        dashed lines mark min and max similarity. Metrics are annotated inside
+        each subplot.
 
         Args:
             outputs: List of SearchIndexOutput instances, one per query
@@ -70,7 +74,11 @@ class SimilarityVisualizer(PipelineStep):
         Returns:
             matplotlib Figure with len(outputs) vertically stacked subplots
         """
-        n = len(outputs)
+        sorted_outputs = sorted(outputs, key=lambda o: o.accumulated_similarity, reverse=True)
+        all_areas: list[str] = sorted({r.area for o in sorted_outputs for r in o.results})
+        color_map = plt.colormaps.get_cmap("tab10")
+        area_colors: dict[str, Any] = {area: color_map(i / max(len(all_areas), 1)) for i, area in enumerate(all_areas)}
+        n = len(sorted_outputs)
         fig, raw_axes = plt.subplots(
             nrows=n,
             ncols=1,
@@ -78,27 +86,46 @@ class SimilarityVisualizer(PipelineStep):
             sharex=True,
         )
         axes_list: list[matplotlib.axes.Axes] = [raw_axes] if n == 1 else list(raw_axes)
-        for ax, output in zip(axes_list, outputs):
+        for ax, output in zip(axes_list, sorted_outputs):
             similarities = [r.similarity for r in output.results]
-            ax.hist(similarities, bins=40, color="steelblue", edgecolor="white")
-            ax.set_ylabel("Count")
-            ax.set_title(
-                f"{output.query[:80]!r}",
-                fontsize=10,
-                pad=6,
-            )
+            areas = [r.area for r in output.results]
+            unique_areas_in_output = sorted(set(areas))
+            bins = np.linspace(min(similarities), max(similarities), 41)
+            bottom = np.zeros(len(bins) - 1)
+            for area in unique_areas_in_output:
+                area_sims = [s for s, a in zip(similarities, areas) if a == area]
+                counts, _ = np.histogram(area_sims, bins=bins)
+                ax.bar(
+                    bins[:-1],
+                    counts,
+                    width=np.diff(bins),
+                    bottom=bottom,
+                    color=area_colors[area],
+                    label=area,
+                    align="edge",
+                    edgecolor="none",
+                )
+                bottom += counts.astype(float)
+            ax.axvline(min(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+            ax.axvline(max(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+            ax.axvline(self._similarity_threshold, color="red", linestyle="--", linewidth=1.0, alpha=0.8)
+            acc_above = output.accumulated_similarity_above(self._similarity_threshold)
+            ratio = output.precision_ratio(self._similarity_threshold)
             ax.text(
                 0.02, 0.95,
-                f"Accumulated Similarity: {output.accumulated_similarity:.2f}",
+                f"Acc.Sim: {output.accumulated_similarity:.1f}  |  Above {self._similarity_threshold:.2f}: {acc_above:.1f} ({ratio:.0%})  |  Excess: {output.excess_similarity:.1f}",
                 transform=ax.transAxes,
                 ha="left", va="top",
-                fontsize=12,
+                fontsize=9,
                 fontweight="bold",
                 color="steelblue",
                 bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "edgecolor": "steelblue", "alpha": 0.85},
             )
+            ax.set_ylabel("Count")
+            ax.set_title(f"{output.query[:90]!r}", fontsize=10, pad=6)
+            ax.legend(fontsize=7, loc="upper right", ncol=3)
         axes_list[-1].set_xlabel("Cosine Similarity")
-        fig.suptitle("Similarity Distribution by Query", fontsize=13, y=1.01)
+        fig.suptitle("Similarity Distribution by Query (sorted by Accumulated Similarity)", fontsize=13, y=1.01)
         plt.tight_layout()
         return fig
 
@@ -120,15 +147,13 @@ class SimilarityVisualizer(PipelineStep):
         return path
 
     def process(
-        self, input_data: SearchIndexOutput | list[SearchIndexOutput]
+        self, input_data: list[SearchIndexOutput] | SearchIndexOutput
     ) -> SimilarityVisualizationOutput:
         """
         Produce stacked cosine similarity histograms for all input queries.
 
-        Accepts a single SearchIndexOutput or a list of outputs, one per query.
-
         Args:
-            input_data: Single SearchIndexOutput or list of SearchIndexOutput instances
+            input_data: List of SearchIndexOutput instances or a single one
 
         Returns:
             SimilarityVisualizationOutput with the stacked histogram figure and saved path

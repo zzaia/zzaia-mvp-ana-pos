@@ -32,6 +32,11 @@ class SearchResult:
     label: str
     sumula_number: int
 
+    @property
+    def area(self) -> str:
+        """Legal area extracted from the composite label prefix."""
+        return self.label.split("_")[0]
+
 
 @dataclass
 class SearchIndexOutput:
@@ -55,6 +60,49 @@ class SearchIndexOutput:
     def accumulated_similarity(self) -> float:
         """Sum of cosine similarities across all search results."""
         return sum(r.similarity for r in self.results)
+
+    def accumulated_similarity_above(self, threshold: float) -> float:
+        """
+        Sum of cosine similarities for results exceeding a threshold.
+
+        Args:
+            threshold: Minimum cosine similarity to include in the sum
+
+        Returns:
+            Sum of similarities above the threshold
+        """
+        return sum(r.similarity for r in self.results if r.similarity >= threshold)
+
+    @property
+    def excess_similarity(self) -> float:
+        """Sum of above-mean similarity deviations across all results."""
+        if not self.results:
+            return 0.0
+        mean_sim = self.accumulated_similarity / len(self.results)
+        return sum(r.similarity - mean_sim for r in self.results if r.similarity > mean_sim)
+
+    def precision_ratio(self, threshold: float) -> float:
+        """
+        Ratio of accumulated similarity above threshold to total accumulated similarity.
+
+        Args:
+            threshold: Minimum cosine similarity cutoff
+
+        Returns:
+            Ratio in [0, 1]; higher means results concentrate above threshold
+        """
+        total = self.accumulated_similarity
+        if total == 0.0:
+            return 0.0
+        return self.accumulated_similarity_above(threshold) / total
+
+    @property
+    def area_similarities(self) -> dict[str, float]:
+        """Accumulated cosine similarity grouped by legal area label prefix."""
+        groups: dict[str, float] = {}
+        for r in self.results:
+            groups[r.area] = groups.get(r.area, 0.0) + r.similarity
+        return groups
 
 
 class SumulaSearchIndex:
@@ -165,55 +213,57 @@ class SumulaSearchIndex:
 
 class SearchIndexBuilder(PipelineStep):
     """
-    Build a FAISS semantic search index and execute the configured query.
+    Build a FAISS semantic search index and execute one or more queries.
 
-    Wraps SumulaSearchIndex creation and a full-corpus search in the
-    PipelineStep contract so that the result is persisted as a checkpoint.
+    Accepts a single query string or a list of queries. Returns a list of
+    SearchIndexOutput, one per query, all sharing the same index instance.
     """
 
-    def __init__(self, query: str, top_k: int = 1000):
+    def __init__(self, queries: list[str] | str, top_k: int = 288):
         """
         Initialize search index builder.
 
         Args:
-            query: Portuguese legal query to run against the index
-            top_k: Number of results to retrieve for visualization
+            queries: One or more Portuguese legal queries to run against the index
+            top_k: Number of results to retrieve per query
         """
         super().__init__(
             step_number=7,
             name="Search Index",
-            description="Build FAISS index and execute semantic search query",
+            description="Build FAISS index and execute semantic search queries",
         )
-        self._query = query
+        self._queries = [queries] if isinstance(queries, str) else queries
         self._top_k = top_k
 
-    def process(self, input_data: EmbeddingOutput) -> SearchIndexOutput:
+    def process(self, input_data: EmbeddingOutput) -> list[SearchIndexOutput]:
         """
-        Build index, run query, and return output with results.
+        Build index once, run all queries, and return one output per query.
 
         Args:
             input_data: EmbeddingOutput from step 6
 
         Returns:
-            SearchIndexOutput with populated index and query results
+            List of SearchIndexOutput, one per configured query
         """
         index = SumulaSearchIndex(embedding_output=input_data)
-        results = index.search(self._query, top_k=self._top_k)
-        return SearchIndexOutput(
-            index=index,
-            results=results,
-            query=self._query,
-            embedded_sentences=input_data.embedded_sentences,
-        )
+        return [
+            SearchIndexOutput(
+                index=index,
+                results=index.search(query, top_k=self._top_k),
+                query=query,
+                embedded_sentences=input_data.embedded_sentences,
+            )
+            for query in self._queries
+        ]
 
-    def validate(self, output_data: SearchIndexOutput) -> bool:
+    def validate(self, output_data: list[SearchIndexOutput]) -> bool:
         """
-        Validate that the index produced at least one result.
+        Validate that every query produced at least one result.
 
         Args:
-            output_data: SearchIndexOutput to validate
+            output_data: List of SearchIndexOutput to validate
 
         Returns:
-            True if results list is non-empty
+            True if all outputs have non-empty results
         """
-        return len(output_data.results) > 0
+        return bool(output_data) and all(len(o.results) > 0 for o in output_data)
