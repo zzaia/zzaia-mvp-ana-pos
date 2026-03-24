@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
+import matplotlib
 import matplotlib.axes
 import matplotlib.figure
 import matplotlib.pyplot as plt
@@ -74,7 +75,7 @@ class SimilarityVisualizer(PipelineStep):
         """
         sorted_outputs = sorted(outputs, key=lambda o: o.mean_similarity, reverse=True)
         all_areas: list[str] = sorted({r.area for o in sorted_outputs for r in o.results})
-        color_map = plt.colormaps.get_cmap("tab10")
+        color_map = matplotlib.cm.get_cmap("tab10")
         area_colors: dict[str, Any] = {area: color_map(i / max(len(all_areas), 1)) for i, area in enumerate(all_areas)}
         n = len(sorted_outputs)
         fig, raw_axes = plt.subplots(
@@ -83,7 +84,7 @@ class SimilarityVisualizer(PipelineStep):
             figsize=(12, 4 * n),
             sharex=True,
         )
-        axes_list: list[matplotlib.axes.Axes] = [raw_axes] if n == 1 else list(raw_axes)
+        axes_list: list[matplotlib.axes.Axes] = [cast(matplotlib.axes.Axes, raw_axes)] if n == 1 else cast(list[matplotlib.axes.Axes], list(raw_axes))
         for ax, output in zip(axes_list, sorted_outputs):
             similarities = [r.similarity for r in output.results]
             areas = [r.area for r in output.results]
