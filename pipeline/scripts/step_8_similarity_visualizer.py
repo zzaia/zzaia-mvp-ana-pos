@@ -104,13 +104,27 @@ class SimilarityVisualizer(PipelineStep):
                     edgecolor="none",
                 )
                 bottom += counts.astype(float)
-            ax.axvline(min(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-            ax.axvline(max(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+            for x_val, label, color, ls in [
+                (min(similarities), "min", "gray", "--"),
+                (max(similarities), "max", "gray", "--"),
+                (output.percentile(25), "P25", "orange", ":"),
+                (output.percentile(75), "P75", "orange", ":"),
+                (output.mean_similarity, "mean", "steelblue", "-"),
+            ]:
+                ax.axvline(x_val, color=color, linestyle=ls, linewidth=0.9, alpha=0.8)
+                ax.text(
+                    x_val, 0.02, label,
+                    transform=ax.get_xaxis_transform(),
+                    ha="center", va="bottom",
+                    fontsize=10, color="black",
+                    rotation=90,
+                )
             ax.text(
                 0.02, 0.95,
                 (
                     f"n={len(output.results)}  mean={output.mean_similarity:.4f}  median={output.median_similarity:.4f}  max={output.max_similarity:.4f}  min={output.min_similarity:.4f}\n"
-                    f"std={output.std_similarity:.4f}  var={output.variance_similarity:.5f}  range={output.range_similarity:.4f}  IQR={output.iqr_similarity:.4f}  CV={output.cv_similarity:.4f}"
+                    f"std={output.std_similarity:.4f}  var={output.variance_similarity:.5f}  range={output.range_similarity:.4f}  IQR={output.iqr_similarity:.4f}  CV={output.cv_similarity:.4f}\n"
+                    f"P5={output.percentile(5):.4f}  P25={output.percentile(25):.4f}  P75={output.percentile(75):.4f}  P90={output.percentile(90):.4f}  P95={output.percentile(95):.4f}"
                 ),
                 transform=ax.transAxes,
                 ha="left", va="top",

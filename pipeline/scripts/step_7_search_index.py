@@ -138,6 +138,25 @@ class SearchIndexOutput:
         """Minimum cosine similarity across all results."""
         return self.results[-1].similarity if self.results else 0.0
 
+    def percentile(self, p: float) -> float:
+        """
+        Compute the p-th percentile of cosine similarities using linear interpolation.
+
+        Args:
+            p: Percentile in [0, 100]
+
+        Returns:
+            Interpolated similarity value at the p-th percentile
+        """
+        if not self.results:
+            return 0.0
+        sims = sorted(r.similarity for r in self.results)
+        n = len(sims)
+        idx = (p / 100) * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        return sims[lo] + (sims[hi] - sims[lo]) * (idx - lo)
+
     @property
     def excess_similarity(self) -> float:
         """Sum of above-mean similarity deviations across all results."""
