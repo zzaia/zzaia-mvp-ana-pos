@@ -48,7 +48,18 @@ class SearchIndexOutput:
         results: Search results for the configured query
         query: Query string used to produce results
         embedded_sentences: Propagated embedded sentences for downstream use
-        accumulated_similarity: Sum of cosine similarities across all results (computed property)
+        accumulated_similarity: Sum of cosine similarities across all results
+        excess_similarity: Sum of above-mean similarity deviations
+        area_similarities: Accumulated similarity grouped by legal area
+        mean_similarity: Arithmetic mean of cosine similarities
+        median_similarity: Median cosine similarity
+        std_similarity: Population standard deviation of cosine similarities
+        variance_similarity: Population variance of cosine similarities
+        range_similarity: Range (max minus min) of cosine similarities
+        iqr_similarity: Interquartile range (Q3 minus Q1) of cosine similarities
+        cv_similarity: Coefficient of variation (std / mean) of cosine similarities
+        max_similarity: Maximum cosine similarity (top-1 result score)
+        min_similarity: Minimum cosine similarity across all results
     """
 
     index: SumulaSearchIndex
@@ -61,40 +72,79 @@ class SearchIndexOutput:
         """Sum of cosine similarities across all search results."""
         return sum(r.similarity for r in self.results)
 
-    def accumulated_similarity_above(self, threshold: float) -> float:
-        """
-        Sum of cosine similarities for results exceeding a threshold.
+    @property
+    def mean_similarity(self) -> float:
+        """Arithmetic mean of cosine similarities across all results."""
+        if not self.results:
+            return 0.0
+        return self.accumulated_similarity / len(self.results)
 
-        Args:
-            threshold: Minimum cosine similarity to include in the sum
+    @property
+    def median_similarity(self) -> float:
+        """Median cosine similarity across all results."""
+        if not self.results:
+            return 0.0
+        sims = sorted(r.similarity for r in self.results)
+        mid = len(sims) // 2
+        return (sims[mid - 1] + sims[mid]) / 2 if len(sims) % 2 == 0 else sims[mid]
 
-        Returns:
-            Sum of similarities above the threshold
-        """
-        return sum(r.similarity for r in self.results if r.similarity >= threshold)
+    @property
+    def std_similarity(self) -> float:
+        """Population standard deviation of cosine similarities."""
+        if not self.results:
+            return 0.0
+        mean = self.mean_similarity
+        return (sum((r.similarity - mean) ** 2 for r in self.results) / len(self.results)) ** 0.5
+
+    @property
+    def variance_similarity(self) -> float:
+        """Population variance of cosine similarities."""
+        return self.std_similarity ** 2
+
+    @property
+    def range_similarity(self) -> float:
+        """Range (max minus min) of cosine similarities."""
+        if not self.results:
+            return 0.0
+        sims = [r.similarity for r in self.results]
+        return max(sims) - min(sims)
+
+    @property
+    def iqr_similarity(self) -> float:
+        """Interquartile range (Q3 minus Q1) of cosine similarities."""
+        if len(self.results) < 4:
+            return 0.0
+        sims = sorted(r.similarity for r in self.results)
+        n = len(sims)
+        q1 = sims[n // 4]
+        q3 = sims[(3 * n) // 4]
+        return q3 - q1
+
+    @property
+    def cv_similarity(self) -> float:
+        """Coefficient of variation (std / mean) of cosine similarities."""
+        mean = self.mean_similarity
+        if mean == 0.0:
+            return 0.0
+        return self.std_similarity / mean
+
+    @property
+    def max_similarity(self) -> float:
+        """Maximum cosine similarity (top-1 result score)."""
+        return self.results[0].similarity if self.results else 0.0
+
+    @property
+    def min_similarity(self) -> float:
+        """Minimum cosine similarity across all results."""
+        return self.results[-1].similarity if self.results else 0.0
 
     @property
     def excess_similarity(self) -> float:
         """Sum of above-mean similarity deviations across all results."""
         if not self.results:
             return 0.0
-        mean_sim = self.accumulated_similarity / len(self.results)
+        mean_sim = self.mean_similarity
         return sum(r.similarity - mean_sim for r in self.results if r.similarity > mean_sim)
-
-    def precision_ratio(self, threshold: float) -> float:
-        """
-        Ratio of accumulated similarity above threshold to total accumulated similarity.
-
-        Args:
-            threshold: Minimum cosine similarity cutoff
-
-        Returns:
-            Ratio in [0, 1]; higher means results concentrate above threshold
-        """
-        total = self.accumulated_similarity
-        if total == 0.0:
-            return 0.0
-        return self.accumulated_similarity_above(threshold) / total
 
     @property
     def area_similarities(self) -> dict[str, float]:

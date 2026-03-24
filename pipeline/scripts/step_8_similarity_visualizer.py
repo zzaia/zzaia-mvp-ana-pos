@@ -39,13 +39,12 @@ class SimilarityVisualizer(PipelineStep):
     The figure is saved to output_dir.
     """
 
-    def __init__(self, output_dir: Optional[Path] = None, similarity_threshold: float = 0.65):
+    def __init__(self, output_dir: Optional[Path] = None):
         """
         Initialize similarity visualizer.
 
         Args:
             output_dir: Directory for saving figure images; created if absent
-            similarity_threshold: Cosine similarity cutoff for threshold-based metrics
         """
         super().__init__(
             step_number=8,
@@ -53,7 +52,6 @@ class SimilarityVisualizer(PipelineStep):
             description="Plot similarity intensity across all Súmulas sorted by topic",
         )
         self._output_dir = Path(output_dir) if output_dir else None
-        self._similarity_threshold = similarity_threshold
         if self._output_dir:
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -63,10 +61,10 @@ class SimilarityVisualizer(PipelineStep):
         """
         Build vertically stacked histograms of cosine similarity, one per query.
 
-        Subplots are sorted descending by accumulated similarity. All subplots
+        Subplots are sorted descending by mean similarity. All subplots
         share the same X axis. Bars are colored by legal area label. Vertical
-        dashed lines mark min and max similarity. Metrics are annotated inside
-        each subplot.
+        dashed lines mark min and max similarity. Level 1 descriptive statistics
+        are annotated inside each subplot.
 
         Args:
             outputs: List of SearchIndexOutput instances, one per query
@@ -74,7 +72,7 @@ class SimilarityVisualizer(PipelineStep):
         Returns:
             matplotlib Figure with len(outputs) vertically stacked subplots
         """
-        sorted_outputs = sorted(outputs, key=lambda o: o.accumulated_similarity, reverse=True)
+        sorted_outputs = sorted(outputs, key=lambda o: o.mean_similarity, reverse=True)
         all_areas: list[str] = sorted({r.area for o in sorted_outputs for r in o.results})
         color_map = plt.colormaps.get_cmap("tab10")
         area_colors: dict[str, Any] = {area: color_map(i / max(len(all_areas), 1)) for i, area in enumerate(all_areas)}
@@ -108,15 +106,15 @@ class SimilarityVisualizer(PipelineStep):
                 bottom += counts.astype(float)
             ax.axvline(min(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
             ax.axvline(max(similarities), color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-            ax.axvline(self._similarity_threshold, color="red", linestyle="--", linewidth=1.0, alpha=0.8)
-            acc_above = output.accumulated_similarity_above(self._similarity_threshold)
-            ratio = output.precision_ratio(self._similarity_threshold)
             ax.text(
                 0.02, 0.95,
-                f"Acc.Sim: {output.accumulated_similarity:.1f}  |  Above {self._similarity_threshold:.2f}: {acc_above:.1f} ({ratio:.0%})  |  Excess: {output.excess_similarity:.1f}",
+                (
+                    f"n={len(output.results)}  mean={output.mean_similarity:.4f}  median={output.median_similarity:.4f}  max={output.max_similarity:.4f}  min={output.min_similarity:.4f}\n"
+                    f"std={output.std_similarity:.4f}  var={output.variance_similarity:.5f}  range={output.range_similarity:.4f}  IQR={output.iqr_similarity:.4f}  CV={output.cv_similarity:.4f}"
+                ),
                 transform=ax.transAxes,
                 ha="left", va="top",
-                fontsize=9,
+                fontsize=8,
                 fontweight="bold",
                 color="steelblue",
                 bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "edgecolor": "steelblue", "alpha": 0.85},
@@ -125,7 +123,7 @@ class SimilarityVisualizer(PipelineStep):
             ax.set_title(f"{output.query[:90]!r}", fontsize=10, pad=6)
             ax.legend(fontsize=7, loc="upper right", ncol=3)
         axes_list[-1].set_xlabel("Cosine Similarity")
-        fig.suptitle("Similarity Distribution by Query (sorted by Accumulated Similarity)", fontsize=13, y=1.01)
+        fig.suptitle("Similarity Distribution by Query (sorted by Mean Similarity)", fontsize=13, y=1.01)
         plt.tight_layout()
         return fig
 
