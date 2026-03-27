@@ -1,7 +1,10 @@
 """Step 4: Legal citation normalization with typed tokens and metadata storage."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from pipeline_step import PipelineStep
@@ -34,13 +37,13 @@ class CitationOutput:
 
     Attributes:
         sentences: Sentences with citations replaced by typed tokens
-        citation_metadata: Mapping from token occurrence index to original text
+        citation_metadata: Per-sentence mapping from token type to all matched originals
         source_path: Propagated from previous step
     """
 
     sentences: list[str]
-    citation_metadata: list[dict[str, str]] = field(default_factory=list)
-    source_path: Optional[object] = None
+    citation_metadata: list[dict[str, list[str]]] = field(default_factory=list)
+    source_path: Optional[Path] = None
 
 
 class CitationNormalizer(PipelineStep):
@@ -72,7 +75,7 @@ class CitationNormalizer(PipelineStep):
             CitationOutput with normalized sentences and metadata
         """
         normalized: list[str] = []
-        metadata: list[dict[str, str]] = []
+        metadata: list[dict[str, list[str]]] = []
         for sentence in input_data.sentences:
             norm_sentence, citations = self._normalize_sentence(sentence)
             normalized.append(norm_sentence)
@@ -83,21 +86,24 @@ class CitationNormalizer(PipelineStep):
             source_path=input_data.source_path,
         )
 
-    def _normalize_sentence(self, sentence: str) -> tuple[str, dict[str, str]]:
+    def _normalize_sentence(self, sentence: str) -> tuple[str, dict[str, list[str]]]:
         """
         Apply all citation patterns to a single sentence.
+
+        All occurrences of each token type are accumulated so no match is lost
+        when the same token appears multiple times in one sentence.
 
         Args:
             sentence: Input sentence text
 
         Returns:
-            Tuple of (normalized sentence, dict mapping token to original)
+            Tuple of (normalized sentence, dict mapping token to list of originals)
         """
-        citations: dict[str, str] = {}
+        citations: dict[str, list[str]] = {}
         for pattern, token in _CITATION_PATTERNS:
             matches = re.findall(pattern, sentence, flags=re.IGNORECASE)
-            for match in matches:
-                citations[token] = match
+            if matches:
+                citations.setdefault(token, []).extend(matches)
             sentence = re.sub(pattern, token, sentence, flags=re.IGNORECASE)
         return sentence, citations
 

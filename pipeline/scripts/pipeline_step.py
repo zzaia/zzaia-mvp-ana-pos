@@ -1,5 +1,7 @@
 """Abstract base class for all pipeline steps."""
 
+from __future__ import annotations
+
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -21,7 +23,7 @@ class PipelineStep(ABC):
         Initialize pipeline step.
 
         Args:
-            step_number: Sequential position in the pipeline (0-10)
+            step_number: Sequential position in the pipeline (0-9)
             name: Human-readable step name
             description: Brief description of the transformation
         """

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -11,6 +12,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from pipeline_step import PipelineStep
 from step_5_labeler import LabeledOutput, LabeledSentence
+from utils import mean_pool
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -51,7 +53,7 @@ class EmbeddingOutput:
     embedded_sentences: list[EmbeddedSentence]
     model_name: str
     embedding_dim: int
-    source_path: Optional[object] = None
+    source_path: Optional[Path] = None
 
 
 class EmbeddingGenerator(PipelineStep):
@@ -136,56 +138,74 @@ class EmbeddingGenerator(PipelineStep):
         """
         Encode a batch of sentence texts into embedding vectors.
 
+        Sentences short enough to fit in the context window are tokenized and
+        forwarded in a single batched model call. Long sentences fall through to
+        the per-sentence sliding window path.
+
         Args:
             texts: List of sentence strings
 
         Returns:
             List of numpy embedding arrays in the same order
         """
-        vectors: list[np.ndarray] = []
-        for text in texts:
-            vector = self._embed_single(text)
-            vectors.append(vector)
+        short_indices: list[int] = []
+        short_texts: list[str] = []
+        long_indices: list[int] = []
+        long_texts: list[str] = []
+        for i, text in enumerate(texts):
+            ids = self._tokenizer(text, return_tensors="pt", truncation=False, add_special_tokens=True)["input_ids"][0]
+            if len(ids) <= self._max_tokens:
+                short_indices.append(i)
+                short_texts.append(text)
+            else:
+                long_indices.append(i)
+                long_texts.append(text)
+        vectors: list[np.ndarray] = [None] * len(texts)
+        if short_texts:
+            tokens = self._tokenizer(
+                short_texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self._max_tokens,
+                padding=True,
+            )
+            with torch.no_grad():
+                output = self._model(**tokens)
+            pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
+            for i, idx in enumerate(short_indices):
+                vectors[idx] = pooled[i].numpy()
+        for idx, text in zip(long_indices, long_texts):
+            vectors[idx] = self._embed_long(text)
         return vectors
 
-    def _embed_single(self, text: str) -> np.ndarray:
+    def _embed_long(self, text: str) -> np.ndarray:
         """
-        Embed a single sentence using sliding window if necessary.
+        Embed a single long sentence using sliding window averaging.
 
         Args:
-            text: Sentence text
+            text: Sentence text exceeding max_tokens
 
         Returns:
-            Mean-pooled embedding array
+            Mean-pooled embedding array averaged across windows
         """
-        tokens = self._tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=False,
-            add_special_tokens=True,
-        )
+        tokens = self._tokenizer(text, return_tensors="pt", truncation=False, add_special_tokens=True)
         input_ids: torch.Tensor = tokens["input_ids"][0]
-        if len(input_ids) <= self._max_tokens:
-            return self._mean_pool(tokens)
         return self._sliding_window(input_ids)
 
     def _mean_pool(self, tokens: dict) -> np.ndarray:
         """
-        Compute mean-pooled embedding for tokenized input.
+        Compute mean-pooled embedding for a single tokenized input.
 
         Args:
-            tokens: Tokenizer output dict
+            tokens: Tokenizer output dict for a single sequence
 
         Returns:
             Numpy embedding array
         """
         with torch.no_grad():
             output = self._model(**tokens)
-        hidden: torch.Tensor = output.last_hidden_state
-        mask: torch.Tensor = tokens["attention_mask"].unsqueeze(-1).float()
-        summed = (hidden * mask).sum(dim=1)
-        counts = mask.sum(dim=1).clamp(min=1)
-        return (summed / counts).squeeze(0).numpy()
+        pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
+        return pooled.squeeze(0).numpy()
 
     def _sliding_window(self, input_ids: torch.Tensor) -> np.ndarray:
         """

@@ -11,9 +11,11 @@ import matplotlib.axes
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.special import softmax as scipy_softmax
+from scipy.stats import gaussian_kde
 
-from pipeline_step import PipelineStep
 from step_7_search_index import SearchIndexOutput
+from visualization_step import VisualizationStep
 
 
 @dataclass
@@ -63,7 +65,7 @@ class ProbabilityEstimatorOutput:
         return self.query_probabilities[0]
 
 
-class ProbabilityEstimator(PipelineStep):
+class ProbabilityEstimator(VisualizationStep):
     """
     Estimate the probability that each query topic appears in the súmula corpus.
 
@@ -87,16 +89,14 @@ class ProbabilityEstimator(PipelineStep):
             step_number=9,
             name="Probability Estimator",
             description="Estimate query occurrence probability via KDE and softmax",
+            output_dir=output_dir,
         )
-        self._output_dir = Path(output_dir) if output_dir else None
-        if self._output_dir:
-            self._output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _gaussian_kde_probability_above(
+    def _kde_probability_above(
         self, similarities: list[float], baseline: float
     ) -> float:
         """
-        Estimate P(similarity > baseline) using Gaussian KDE with Scott bandwidth.
+        Estimate P(similarity > baseline) using scipy Gaussian KDE.
 
         Args:
             similarities: List of cosine similarity values
@@ -106,32 +106,13 @@ class ProbabilityEstimator(PipelineStep):
             Probability mass above baseline under the KDE
         """
         arr = np.array(similarities, dtype=float)
-        n = len(arr)
-        std = float(arr.std())
-        if std == 0.0 or n < 2:
-            return 1.0 if arr.mean() > baseline else 0.0
-        bandwidth = 1.06 * std * (n ** -0.2)
-        x = np.linspace(baseline, float(arr.max()) + 3 * bandwidth, 500)
-        diffs = (x[:, None] - arr[None, :]) / bandwidth
-        kernels = np.exp(-0.5 * diffs ** 2) / (np.sqrt(2 * np.pi) * bandwidth)
-        density = kernels.mean(axis=1)
-        return float(np.trapz(density, x))
+        if arr.std() == 0.0 or len(arr) < 2:
+            return 1.0 if float(arr.mean()) > baseline else 0.0
+        kde = gaussian_kde(arr)
+        x = np.linspace(baseline, float(arr.max()) + 0.05, 500)
+        return float(np.trapz(kde(x), x))
 
-    def _compute_softmax(self, values: list[float]) -> list[float]:
-        """
-        Compute softmax probabilities over a list of values.
-
-        Args:
-            values: Input values (e.g., mean similarities)
-
-        Returns:
-            Softmax-normalized probabilities summing to 1
-        """
-        arr = np.array(values, dtype=float)
-        exp_arr = np.exp(arr - arr.max())
-        return list(exp_arr / exp_arr.sum())
-
-    def _normalize(self, values: list[float]) -> list[float]:
+    def _min_max_normalize(self, values: list[float]) -> list[float]:
         """
         Min-max normalize a list of values to [0, 1].
 
@@ -200,23 +181,6 @@ class ProbabilityEstimator(PipelineStep):
         plt.tight_layout()
         return fig
 
-    def _save_figure(self, fig: Any, filename: str) -> Optional[Path]:
-        """
-        Save a figure to the configured output directory.
-
-        Args:
-            fig: matplotlib Figure to save
-            filename: Target filename including extension
-
-        Returns:
-            Resolved Path where the figure was saved, or None when no output_dir is set
-        """
-        if not self._output_dir:
-            return None
-        path = self._output_dir / filename
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        return path
-
     def process(self, input_data: list[SearchIndexOutput]) -> ProbabilityEstimatorOutput:
         """
         Compute probabilistic occurrence estimates for all queries.
@@ -231,17 +195,17 @@ class ProbabilityEstimator(PipelineStep):
         corpus_mean = float(np.mean(all_sims))
         corpus_std = float(np.std(all_sims)) or 1e-9
         mean_sims = [o.mean_similarity for o in input_data]
-        softmax_probs = self._compute_softmax(mean_sims)
+        softmax_probs = list(scipy_softmax(np.array(mean_sims, dtype=float)))
         kde_probs = [
-            self._gaussian_kde_probability_above(
+            self._kde_probability_above(
                 [r.similarity for r in o.results], corpus_mean
             )
             for o in input_data
         ]
         z_scores = [(m - corpus_mean) / corpus_std for m in mean_sims]
-        norm_softmax = self._normalize(softmax_probs)
-        norm_kde = self._normalize(kde_probs)
-        norm_z = self._normalize(z_scores)
+        norm_softmax = self._min_max_normalize(softmax_probs)
+        norm_kde = self._min_max_normalize(kde_probs)
+        norm_z = self._min_max_normalize(z_scores)
         combined = [0.4 * s + 0.4 * k + 0.2 * z for s, k, z in zip(norm_softmax, norm_kde, norm_z)]
         ranked_indices = sorted(range(len(input_data)), key=lambda i: combined[i], reverse=True)
         query_probs: list[QueryProbability] = []

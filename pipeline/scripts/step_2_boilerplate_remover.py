@@ -1,7 +1,10 @@
 """Step 2: Boilerplate removal using regex patterns and TF-IDF repetition detection."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -48,7 +51,7 @@ class BoilerplateOutput:
     filtered_text: str
     removed_count: int
     tfidf_threshold: float
-    source_path: Optional[object] = None
+    source_path: Optional[Path] = None
 
 
 class BoilerplateRemover(PipelineStep):

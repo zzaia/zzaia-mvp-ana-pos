@@ -1,6 +1,9 @@
 """Step 3: Súmula-level segmentation using BOILERPLATE_TOKEN boundary splitting."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from pipeline_step import PipelineStep
@@ -20,7 +23,7 @@ class SegmentationOutput:
 
     sentences: list[str]
     sentence_count: int
-    source_path: Optional[object] = None
+    source_path: Optional[Path] = None
 
 
 class SentenceSegmenter(PipelineStep):
@@ -80,10 +83,13 @@ class SentenceSegmenter(PipelineStep):
 
     def _fallback_segment(self, text: str) -> list[str]:
         """
-        Split text on double newlines as a paragraph-level fallback.
+        Split already-processed text on double newlines as a paragraph-level fallback.
+
+        Expects text with boilerplate tokens already removed so no further
+        stripping is needed per paragraph.
 
         Args:
-            text: Full document text without boilerplate boundaries
+            text: Boilerplate-stripped document text
 
         Returns:
             List of non-empty paragraph strings meeting min_tokens threshold
@@ -91,7 +97,7 @@ class SentenceSegmenter(PipelineStep):
         paragraphs = text.split("\n\n")
         segments: list[str] = []
         for paragraph in paragraphs:
-            cleaned = self._strip_boilerplate(paragraph)
+            cleaned = paragraph.strip()
             if cleaned and len(cleaned.split()) >= self._min_tokens:
                 segments.append(cleaned)
         return segments
@@ -109,7 +115,8 @@ class SentenceSegmenter(PipelineStep):
         text = input_data.filtered_text
         segments = self._split_on_boilerplate(text)
         if len(segments) < 2:
-            segments = self._fallback_segment(text)
+            stripped = self._strip_boilerplate(text)
+            segments = self._fallback_segment(stripped)
         return SegmentationOutput(
             sentences=segments,
             sentence_count=len(segments),

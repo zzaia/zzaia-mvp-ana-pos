@@ -1,1 +1,1 @@
-"""Semantic Frequency Analysis pipeline for Brazilian Legal Documents."""
+"""Semantic search pipeline over Brazilian Superior Court of Justice Súmulas."""

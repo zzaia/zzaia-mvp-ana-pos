@@ -1,7 +1,12 @@
 """Step 1: Encoding normalization using ftfy and Unicode NFC form."""
 
+from __future__ import annotations
+
+import difflib
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 
 import ftfy
 
@@ -22,7 +27,7 @@ class NormalizerOutput:
 
     clean_text: str
     replacements: list[tuple[str, str]] = field(default_factory=list)
-    source_path: object = None
+    source_path: Optional[Path] = None
 
 
 class EncodingNormalizer(PipelineStep):
@@ -64,7 +69,11 @@ class EncodingNormalizer(PipelineStep):
 
     def _log_replacements(self, original: str, fixed: str) -> list[tuple[str, str]]:
         """
-        Identify and log character-level replacements made by ftfy.
+        Identify and log token-level replacements made by ftfy using difflib.
+
+        Uses difflib.ndiff to compare word sequences so that insertions,
+        deletions, and replacements are all captured correctly, regardless
+        of length differences between the two texts.
 
         Args:
             original: Text before ftfy processing
@@ -75,12 +84,25 @@ class EncodingNormalizer(PipelineStep):
         """
         if original == fixed:
             return []
-        replacements: list[tuple[str, str]] = []
         orig_words = original.split()
         fixed_words = fixed.split()
-        for orig_word, fixed_word in zip(orig_words, fixed_words):
-            if orig_word != fixed_word:
-                replacements.append((orig_word, fixed_word))
+        replacements: list[tuple[str, str]] = []
+        removed: list[str] = []
+        added: list[str] = []
+        for tag in difflib.ndiff(orig_words, fixed_words):
+            code = tag[:2]
+            token = tag[2:]
+            if code == "- ":
+                removed.append(token)
+            elif code == "+ ":
+                added.append(token)
+            else:
+                if removed or added:
+                    replacements.append((" ".join(removed), " ".join(added)))
+                removed.clear()
+                added.clear()
+        if removed or added:
+            replacements.append((" ".join(removed), " ".join(added)))
         return replacements
 
     def validate(self, output_data: NormalizerOutput) -> bool:

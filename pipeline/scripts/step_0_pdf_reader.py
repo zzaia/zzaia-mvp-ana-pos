@@ -1,11 +1,20 @@
 """Step 0: Read text from PDF using pdfplumber (digital) and Tesseract (scanned)."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import pdfplumber
+
+try:
+    import pytesseract
+    from PIL import Image as _PilImage
+    _OCR_AVAILABLE = True
+except ImportError:
+    _OCR_AVAILABLE = False
 
 from pipeline_step import PipelineStep
 
@@ -106,18 +115,14 @@ class PdfReader(PipelineStep):
         Returns:
             Extracted text string from OCR
         """
-        try:
-            import pytesseract
-            from PIL import Image
-
-            image: Image.Image = page.to_image(resolution=300).original
-            text: str = pytesseract.image_to_string(image, lang="por")
-            return text
-        except ImportError:
+        if not _OCR_AVAILABLE:
             logging.getLogger("pipeline.step_0").warning(
                 f"pytesseract/Pillow not available; page {page_num} returned empty"
             )
             return ""
+        image: _PilImage.Image = page.to_image(resolution=300).original
+        text: str = pytesseract.image_to_string(image, lang="por")
+        return text
 
     def validate(self, output_data: PdfReaderOutput) -> bool:
         """

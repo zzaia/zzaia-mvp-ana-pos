@@ -8,12 +8,13 @@ from typing import Any, Optional, cast
 
 import matplotlib
 import matplotlib.axes
+import matplotlib.colormaps
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pipeline_step import PipelineStep
 from step_7_search_index import SearchIndexOutput
+from visualization_step import VisualizationStep
 
 
 @dataclass
@@ -30,7 +31,7 @@ class SimilarityVisualizationOutput:
     saved_paths: list[Path] = field(default_factory=list)
 
 
-class SimilarityVisualizer(PipelineStep):
+class SimilarityVisualizer(VisualizationStep):
     """
     Plot cosine similarity distribution across all Súmulas.
 
@@ -51,10 +52,8 @@ class SimilarityVisualizer(PipelineStep):
             step_number=8,
             name="Similarity Visualizer",
             description="Plot similarity intensity across all Súmulas sorted by topic",
+            output_dir=output_dir,
         )
-        self._output_dir = Path(output_dir) if output_dir else None
-        if self._output_dir:
-            self._output_dir.mkdir(parents=True, exist_ok=True)
 
     def _build_stacked_histograms(
         self, outputs: list[SearchIndexOutput]
@@ -75,7 +74,7 @@ class SimilarityVisualizer(PipelineStep):
         """
         sorted_outputs = sorted(outputs, key=lambda o: o.mean_similarity, reverse=True)
         all_areas: list[str] = sorted({r.area for o in sorted_outputs for r in o.results})
-        color_map = matplotlib.cm.get_cmap("tab10")
+        color_map = matplotlib.colormaps["tab10"]
         area_colors: dict[str, Any] = {area: color_map(i / max(len(all_areas), 1)) for i, area in enumerate(all_areas)}
         n = len(sorted_outputs)
         fig, raw_axes = plt.subplots(
@@ -141,23 +140,6 @@ class SimilarityVisualizer(PipelineStep):
         fig.suptitle("Similarity Distribution by Query (sorted by Mean Similarity)", fontsize=13, y=1.01)
         plt.tight_layout()
         return fig
-
-    def _save_figure(self, fig: Any, filename: str) -> Optional[Path]:
-        """
-        Save a matplotlib figure to the configured output directory.
-
-        Args:
-            fig: matplotlib Figure to save
-            filename: Target filename including extension
-
-        Returns:
-            Resolved Path where the figure was saved, or None when no output_dir is set
-        """
-        if not self._output_dir:
-            return None
-        path = self._output_dir / filename
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        return path
 
     def process(
         self, input_data: list[SearchIndexOutput] | SearchIndexOutput

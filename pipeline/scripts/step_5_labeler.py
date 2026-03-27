@@ -1,8 +1,11 @@
 """Step 5: Súmula labeler that extracts area, sub-area, and súmula number from segments."""
 
+from __future__ import annotations
+
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from pipeline_step import PipelineStep
@@ -47,7 +50,7 @@ class LabeledSentence:
     sumula_number: int
     area: str
     sub_area: str
-    citation_metadata: dict[str, str]
+    citation_metadata: dict[str, list[str]]
 
 
 @dataclass
@@ -61,7 +64,7 @@ class LabeledOutput:
     """
 
     labeled_sentences: list[LabeledSentence]
-    source_path: Optional[object] = None
+    source_path: Optional[Path] = None
 
 
 class SumulaLabeler(PipelineStep):
@@ -146,7 +149,7 @@ class SumulaLabeler(PipelineStep):
         return f"{area}_{sub_area}_{sumula_number}"
 
     def _label_segment(
-        self, text: str, citation_metadata: dict[str, str], index: int
+        self, text: str, citation_metadata: dict[str, list[str]], index: int
     ) -> LabeledSentence:
         """
         Produce a LabeledSentence from a single segment.

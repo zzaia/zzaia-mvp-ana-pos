@@ -11,6 +11,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from pipeline_step import PipelineStep
 from step_6_embedding_generator import EmbeddingOutput, EmbeddedSentence
+from utils import mean_pool
 
 
 @dataclass
@@ -24,6 +25,7 @@ class SearchResult:
         similarity: Cosine similarity to query (0–1)
         label: Composite label from the labeling step
         sumula_number: Numeric súmula identifier
+        area: Legal area propagated from the labeled sentence
     """
 
     rank: int
@@ -31,11 +33,7 @@ class SearchResult:
     similarity: float
     label: str
     sumula_number: int
-
-    @property
-    def area(self) -> str:
-        """Legal area extracted from the composite label prefix."""
-        return self.label.split("_")[0]
+    area: str = ""
 
 
 @dataclass
@@ -162,12 +160,14 @@ class SearchIndexOutput:
         """Sum of above-mean similarity deviations across all results."""
         if not self.results:
             return 0.0
-        mean_sim = self.mean_similarity
-        return sum(r.similarity - mean_sim for r in self.results if r.similarity > mean_sim)
+        sims = np.array([r.similarity for r in self.results], dtype=float)
+        mean_sim = float(sims.mean())
+        above = sims[sims > mean_sim]
+        return float((above - mean_sim).sum())
 
     @property
     def area_similarities(self) -> dict[str, float]:
-        """Accumulated cosine similarity grouped by legal area label prefix."""
+        """Accumulated cosine similarity grouped by legal area."""
         groups: dict[str, float] = {}
         for r in self.results:
             groups[r.area] = groups.get(r.area, 0.0) + r.similarity
@@ -245,11 +245,8 @@ class SumulaSearchIndex:
         )
         with torch.no_grad():
             output = self._model(**tokens)
-        hidden: torch.Tensor = output.last_hidden_state
-        mask: torch.Tensor = tokens["attention_mask"].unsqueeze(-1).float()
-        summed = (hidden * mask).sum(dim=1)
-        counts = mask.sum(dim=1).clamp(min=1)
-        vector = (summed / counts).squeeze(0).numpy()
+        pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
+        vector = pooled.squeeze(0).numpy()
         return self._normalize(vector.reshape(1, -1))
 
     def search(self, query: str, top_k: int = 10) -> list[SearchResult]:
@@ -276,6 +273,7 @@ class SumulaSearchIndex:
                 similarity=float(score),
                 label=sentence.label,
                 sumula_number=sentence.sumula_number,
+                area=sentence.label.split("_")[0],
             ))
         return results
 

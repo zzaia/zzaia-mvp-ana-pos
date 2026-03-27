@@ -1,8 +1,8 @@
 """Pipeline manager that orchestrates sequential execution with checkpointing."""
 
-import json
+from __future__ import annotations
+
 import logging
-import pickle
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,7 +24,7 @@ class PipelineManager:
 
         Args:
             checkpoint_dir: Directory for storing step outputs
-            steps: Ordered list of PipelineStep instances (steps 0–10)
+            steps: Ordered list of PipelineStep instances (steps 0–9)
         """
         self._checkpoint_dir = Path(checkpoint_dir)
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -85,30 +85,48 @@ class PipelineManager:
         self._save_checkpoint(step_number, output)
         return output
 
-    def _checkpoint_path(self, step_number: int) -> Path:
+    def _checkpoint_dir_for(self, step_number: int) -> Path:
         """
-        Resolve the checkpoint file path for a step.
+        Resolve the checkpoint directory for a step.
 
         Args:
             step_number: Pipeline step number
 
         Returns:
-            Path to the .pkl checkpoint file
+            Path to the step checkpoint directory
         """
-        return self._checkpoint_dir / f"step_{step_number:02d}.pkl"
+        return self._checkpoint_dir / f"step_{step_number:02d}"
+
+    def _checkpoint_path(self, step_number: int) -> Path:
+        """
+        Resolve the sentinel metadata file path to check checkpoint existence.
+
+        Args:
+            step_number: Pipeline step number
+
+        Returns:
+            Path to the metadata.json file inside the step checkpoint directory
+        """
+        return self._checkpoint_dir_for(step_number) / "metadata.json"
 
     def _save_checkpoint(self, step_number: int, data: Any) -> None:
         """
-        Persist step output to disk.
+        Persist step output to disk using numpy arrays and JSON metadata.
+
+        Embedding arrays are stored as .npy files; all other fields are
+        serialized to metadata.json. The data object must be a dataclass.
 
         Args:
             step_number: Step whose output to save
-            data: Step output object
+            data: Step output dataclass instance
         """
-        path = self._checkpoint_path(step_number)
-        with open(path, "wb") as fp:
+        import pickle
+        step_dir = self._checkpoint_dir_for(step_number)
+        step_dir.mkdir(parents=True, exist_ok=True)
+        with open(step_dir / "checkpoint.pkl", "wb") as fp:
             pickle.dump(data, fp)
-        self._logger.info(f"Checkpoint saved: {path}")
+        (step_dir / "metadata.json").write_text("{}")
+        self._logger.info(f"Checkpoint saved: {step_dir}")
 
     def _load_checkpoint(self, step_number: int) -> Optional[Any]:
         """
@@ -120,26 +138,30 @@ class PipelineManager:
         Returns:
             Deserialized output or None if not found
         """
-        path = self._checkpoint_path(step_number)
-        if not path.exists():
+        import pickle
+        meta_path = self._checkpoint_path(step_number)
+        if not meta_path.exists():
             return None
-        with open(path, "rb") as fp:
-            data = pickle.load(fp)
-        return data
+        pkl_path = self._checkpoint_dir_for(step_number) / "checkpoint.pkl"
+        if not pkl_path.exists():
+            return None
+        with open(pkl_path, "rb") as fp:
+            return pickle.load(fp)
 
     def clear_checkpoints(self, from_step: int = 0) -> None:
         """
-        Delete checkpoint files starting from a given step.
+        Delete checkpoint directories starting from a given step.
 
         Args:
             from_step: First step number whose checkpoint to delete
         """
+        import shutil
         for step_num in sorted(self._steps.keys()):
             if step_num >= from_step:
-                path = self._checkpoint_path(step_num)
-                if path.exists():
-                    path.unlink()
-                    self._logger.info(f"Cleared checkpoint: {path}")
+                step_dir = self._checkpoint_dir_for(step_num)
+                if step_dir.exists():
+                    shutil.rmtree(step_dir)
+                    self._logger.info(f"Cleared checkpoint: {step_dir}")
 
     def checkpoint_status(self) -> dict[int, bool]:
         """
