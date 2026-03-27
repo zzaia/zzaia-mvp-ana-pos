@@ -8,7 +8,6 @@ from typing import Any, Optional, cast
 
 import matplotlib
 import matplotlib.axes
-import matplotlib.colormaps
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
