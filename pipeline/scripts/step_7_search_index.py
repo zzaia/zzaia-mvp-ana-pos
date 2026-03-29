@@ -191,8 +191,9 @@ class SumulaSearchIndex:
             embedding_output: Step 6 output with pre-computed sentence embeddings
         """
         self._sentences = embedding_output.embedded_sentences
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._tokenizer = AutoTokenizer.from_pretrained(embedding_output.model_name)
-        self._model = AutoModel.from_pretrained(embedding_output.model_name)
+        self._model = AutoModel.from_pretrained(embedding_output.model_name).to(self._device)
         self._model.eval()
         embeddings = np.stack([s.embedding for s in self._sentences])
         self._index = self._build_index(embeddings)
@@ -243,10 +244,11 @@ class SumulaSearchIndex:
             truncation=True,
             return_tensors="pt",
         )
+        tokens = {k: v.to(self._device) for k, v in tokens.items()}
         with torch.no_grad():
             output = self._model(**tokens)
         pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
-        vector = pooled.squeeze(0).numpy()
+        vector = pooled.squeeze(0).cpu().numpy()
         return self._normalize(vector.reshape(1, -1))
 
     def search(self, query: str, top_k: int = 10) -> list[SearchResult]:

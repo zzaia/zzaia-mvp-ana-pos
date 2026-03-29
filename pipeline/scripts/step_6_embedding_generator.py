@@ -91,6 +91,7 @@ class EmbeddingGenerator(PipelineStep):
         self._overlap_tokens = overlap_tokens
         self._batch_size = batch_size
         self._model_name = model_name
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._tokenizer: Optional[PreTrainedTokenizerBase] = None
         self._model: Optional[PreTrainedModel] = None
 
@@ -98,7 +99,7 @@ class EmbeddingGenerator(PipelineStep):
         """Load tokenizer and model lazily using configured model name."""
         if self._model is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
-            self._model = AutoModel.from_pretrained(self._model_name)
+            self._model = AutoModel.from_pretrained(self._model_name).to(self._device)
             self._model.eval()
 
     def process(self, input_data: LabeledOutput) -> EmbeddingOutput:
@@ -169,11 +170,12 @@ class EmbeddingGenerator(PipelineStep):
                 max_length=self._max_tokens,
                 padding=True,
             )
+            tokens = {k: v.to(self._device) for k, v in tokens.items()}
             with torch.no_grad():
                 output = self._model(**tokens)
             pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
             for i, idx in enumerate(short_indices):
-                vectors[idx] = pooled[i].numpy()
+                vectors[idx] = pooled[i].cpu().numpy()
         for idx, text in zip(long_indices, long_texts):
             vectors[idx] = self._embed_long(text)
         return vectors
@@ -205,7 +207,7 @@ class EmbeddingGenerator(PipelineStep):
         with torch.no_grad():
             output = self._model(**tokens)
         pooled = mean_pool(output.last_hidden_state, tokens["attention_mask"])
-        return pooled.squeeze(0).numpy()
+        return pooled.squeeze(0).cpu().numpy()
 
     def _sliding_window(self, input_ids: torch.Tensor) -> np.ndarray:
         """
@@ -224,8 +226,8 @@ class EmbeddingGenerator(PipelineStep):
             if len(chunk) < 4:
                 break
             chunk_tokens = {
-                "input_ids": chunk.unsqueeze(0),
-                "attention_mask": torch.ones(1, len(chunk), dtype=torch.long),
+                "input_ids": chunk.unsqueeze(0).to(self._device),
+                "attention_mask": torch.ones(1, len(chunk), dtype=torch.long).to(self._device),
             }
             window_embeddings.append(self._mean_pool(chunk_tokens))
         return np.mean(window_embeddings, axis=0)

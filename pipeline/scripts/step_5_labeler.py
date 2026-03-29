@@ -168,7 +168,8 @@ class SumulaLabeler(PipelineStep):
             sumula_number = index
         if header_lines:
             parts = header_lines[0].split(" - ", 1)
-            area_raw = re.sub(r"(?i)^DIREITO\s+", "", parts[0]).strip()
+            area_raw = re.sub(r"(?i)^DIREITO\s+(DA|DO|DE|DOS|DAS)\s+", "", parts[0]).strip()
+            area_raw = re.sub(r"(?i)^DIREITO\s+", "", area_raw).strip()
             area = _sanitize(area_raw)
             sub_area = _sanitize(parts[1]) if len(parts) > 1 else "Desconhecido"
         else:
