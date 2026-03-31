@@ -191,12 +191,29 @@ class SumulaSearchIndex:
             embedding_output: Step 6 output with pre-computed sentence embeddings
         """
         self._sentences = embedding_output.embedded_sentences
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = self._select_device()
         self._tokenizer = AutoTokenizer.from_pretrained(embedding_output.model_name)
         self._model = AutoModel.from_pretrained(embedding_output.model_name).to(self._device)
         self._model.eval()
         embeddings = np.stack([s.embedding for s in self._sentences])
         self._index = self._build_index(embeddings)
+
+    @staticmethod
+    def _select_device() -> torch.device:
+        """
+        Select CUDA when sufficient free memory is available, otherwise CPU.
+
+        Returns:
+            torch.device for model placement
+        """
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info(0)
+            required_bytes = 1_500 * 1024 * 1024
+            return torch.device("cuda") if free_bytes >= required_bytes else torch.device("cpu")
+        except Exception:
+            return torch.device("cpu")
 
     def _normalize(self, vectors: np.ndarray) -> np.ndarray:
         """
